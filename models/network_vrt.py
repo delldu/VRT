@@ -17,9 +17,10 @@ from torch.nn.modules.utils import _pair, _single
 import numpy as np
 from functools import reduce, lru_cache
 from operator import mul
-from einops import rearrange
+# from einops import rearrange
 from einops.layers.torch import Rearrange
 
+import pdb
 
 class ModulatedDeformConv(nn.Module):
 
@@ -912,6 +913,10 @@ class TMSAG(nn.Module):
             )
             for i in range(depth)])
 
+        self.BxCxDxHxW_BxDxHxWxC = Rearrange('b c d h w -> b d h w c')
+        self.BxDxHxWxC_BxCxDxHxW = Rearrange('b d h w c -> b c d h w')
+
+
     def forward(self, x):
         """ Forward function.
 
@@ -921,7 +926,8 @@ class TMSAG(nn.Module):
         # calculate attention mask for attention
         B, C, D, H, W = x.shape
         window_size, shift_size = get_window_size((D, H, W), self.window_size, self.shift_size)
-        x = rearrange(x, 'b c d h w -> b d h w c')
+        # x = rearrange(x, 'b c d h w -> b d h w c')
+        x = self.BxCxDxHxW_BxDxHxWxC(x)        
         Dp = int(np.ceil(D / window_size[0])) * window_size[0]
         Hp = int(np.ceil(H / window_size[1])) * window_size[1]
         Wp = int(np.ceil(W / window_size[2])) * window_size[2]
@@ -931,8 +937,8 @@ class TMSAG(nn.Module):
             x = blk(x, attn_mask)
 
         x = x.view(B, D, H, W, -1)
-        x = rearrange(x, 'b d h w c -> b c d h w')
-
+        # x = rearrange(x, 'b d h w c -> b c d h w')
+        x = self.BxDxHxWxC_BxCxDxHxW(x)        
         return x
 
 
@@ -1369,6 +1375,10 @@ class VRT(nn.Module):
             self.upsample = Upsample(upscale, num_feat)
             self.conv_last = nn.Conv3d(num_feat, in_chans, kernel_size=(1, 3, 3), padding=(0, 1, 1))
 
+        self.NxCxDxHxW_NxDxHxWxC = Rearrange('n c d h w -> n d h w c')
+        self.NxDxHxWxC_NxCxDxHxW = Rearrange('n d h w c -> n c d h w')
+        # self.NxCxDxHxW_NxDxHxWxC = Rearrange('n c d h w -> n d h w c')
+
     def forward(self, x):
         # x: (N, D, C, H, W)
 
@@ -1531,9 +1541,11 @@ class VRT(nn.Module):
         for layer in self.stage8:
             x = layer(x)
 
-        x = rearrange(x, 'n c d h w -> n d h w c')
+        # x = rearrange(x, 'n c d h w -> n d h w c')
+        x = self.NxCxDxHxW_NxDxHxWxC(x)
         x = self.norm(x)
-        x = rearrange(x, 'n d h w c -> n c d h w')
+        # x = rearrange(x, 'n d h w c -> n c d h w')
+        x = self.NxDxHxWxC_NxCxDxHxW(x)
 
         return x
 
@@ -1559,6 +1571,12 @@ if __name__ == '__main__':
     print(model)
     print('{:>16s} : {:<.4f} [M]'.format('#Params', sum(map(lambda x: x.numel(), model.parameters())) / 10 ** 6))
 
-    x = torch.randn((2, 12, 3, height, width)).to(device)
-    x = model(x)
+    # torch.Size([1, 40, 3, 128, 128])
+
+    # x = torch.randn((2, 12, 3, height, width)).to(device)
+    x = torch.randn((1, 40, 3, 64, 64)).to(device)
+    with torch.no_grad():
+        x = model(x)
     print(x.shape)
+
+    pdb.set_trace()

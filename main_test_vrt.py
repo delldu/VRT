@@ -19,6 +19,7 @@ from models.network_vrt import VRT as net
 from utils import utils_image as util
 from data.dataset_video_test import VideoRecurrentTestDataset, VideoTestVimeo90KDataset, SingleVideoRecurrentTestDataset
 
+import pdb
 
 def main():
     parser = argparse.ArgumentParser()
@@ -210,6 +211,8 @@ def prepare_model_dataset(args):
     else:
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         url = 'https://github.com/JingyunLiang/VRT/releases/download/v0.0/{}'.format(os.path.basename(model_path))
+        pdb.set_trace()
+
         r = requests.get(url, allow_redirects=True)
         print(f'downloading model {model_path}')
         open(model_path, 'wb').write(r.content)
@@ -227,6 +230,7 @@ def prepare_model_dataset(args):
             os.makedirs('testsets', exist_ok=True)
             for dataset in datasets:
                 url = f'https://github.com/JingyunLiang/VRT/releases/download/v0.0/testset_{dataset}.tar.gz'
+                pdb.set_trace()
                 r = requests.get(url, allow_redirects=True)
                 print(f'downloading testing dataset {dataset}')
                 open(f'testsets/{dataset}.tar.gz', 'wb').write(r.content)
@@ -305,6 +309,8 @@ def test_clip(lq, model, args):
         for h_idx in h_idx_list:
             for w_idx in w_idx_list:
                 in_patch = lq[..., h_idx:h_idx+size_patch_testing, w_idx:w_idx+size_patch_testing]
+                # in_patch.size() -- [1, 6, 3, 128, 128]
+
                 out_patch = model(in_patch).detach().cpu()
 
                 out_patch_mask = torch.ones_like(out_patch)
