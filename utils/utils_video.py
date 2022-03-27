@@ -35,7 +35,7 @@ def scandir(dir_path, suffix=None, recursive=False, full_path=False):
 
     def _scandir(dir_path, suffix, recursive):
         for entry in os.scandir(dir_path):
-            if not entry.name.startswith('.') and entry.is_file():
+            if not entry.name.startswith(".") and entry.is_file():
                 if full_path:
                     return_path = entry.path
                 else:
@@ -72,7 +72,7 @@ def read_img_seq(path, require_mod_crop=False, scale=1, return_imgname=False):
         img_paths = path
     else:
         img_paths = sorted(list(scandir(path, full_path=True)))
-    imgs = [cv2.imread(v).astype(np.float32) / 255. for v in img_paths]
+    imgs = [cv2.imread(v).astype(np.float32) / 255.0 for v in img_paths]
 
     if require_mod_crop:
         imgs = [mod_crop(img, scale) for img in imgs]
@@ -101,8 +101,8 @@ def img2tensor(imgs, bgr2rgb=True, float32=True):
 
     def _totensor(img, bgr2rgb, float32):
         if img.shape[2] == 3 and bgr2rgb:
-            if img.dtype == 'float64':
-                img = img.astype('float32')
+            if img.dtype == "float64":
+                img = img.astype("float32")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = torch.from_numpy(img.transpose(2, 0, 1))
         if float32:
@@ -137,7 +137,7 @@ def tensor2img(tensor, rgb2bgr=True, out_type=np.uint8, min_max=(0, 1)):
         shape (H x W). The channel order is BGR.
     """
     if not (torch.is_tensor(tensor) or (isinstance(tensor, list) and all(torch.is_tensor(t) for t in tensor))):
-        raise TypeError(f'tensor or list of tensors expected, got {type(tensor)}')
+        raise TypeError(f"tensor or list of tensors expected, got {type(tensor)}")
 
     if torch.is_tensor(tensor):
         tensor = [tensor]
@@ -163,7 +163,7 @@ def tensor2img(tensor, rgb2bgr=True, out_type=np.uint8, min_max=(0, 1)):
         elif n_dim == 2:
             img_np = _tensor.numpy()
         else:
-            raise TypeError(f'Only support 4D, 3D or 2D tensor. But received with dimension: {n_dim}')
+            raise TypeError(f"Only support 4D, 3D or 2D tensor. But received with dimension: {n_dim}")
         if out_type == np.uint8:
             # Unlike MATLAB, numpy.unit8() WILL NOT round by default.
             img_np = (img_np * 255.0).round()

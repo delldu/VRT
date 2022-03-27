@@ -50,19 +50,19 @@ class VideoRecurrentTestDataset(data.Dataset):
     def __init__(self, opt):
         super(VideoRecurrentTestDataset, self).__init__()
         self.opt = opt
-        self.cache_data = opt['cache_data']
-        self.gt_root, self.lq_root = opt['dataroot_gt'], opt['dataroot_lq']
-        self.data_info = {'lq_path': [], 'gt_path': [], 'folder': [], 'idx': [], 'border': []}
+        self.cache_data = opt["cache_data"]
+        self.gt_root, self.lq_root = opt["dataroot_gt"], opt["dataroot_lq"]
+        self.data_info = {"lq_path": [], "gt_path": [], "folder": [], "idx": [], "border": []}
 
         self.imgs_lq, self.imgs_gt = {}, {}
-        if 'meta_info_file' in opt:
-            with open(opt['meta_info_file'], 'r') as fin:
-                subfolders = [line.split(' ')[0] for line in fin]
+        if "meta_info_file" in opt:
+            with open(opt["meta_info_file"], "r") as fin:
+                subfolders = [line.split(" ")[0] for line in fin]
                 subfolders_lq = [osp.join(self.lq_root, key) for key in subfolders]
                 subfolders_gt = [osp.join(self.gt_root, key) for key in subfolders]
         else:
-            subfolders_lq = sorted(glob.glob(osp.join(self.lq_root, '*')))
-            subfolders_gt = sorted(glob.glob(osp.join(self.gt_root, '*')))
+            subfolders_lq = sorted(glob.glob(osp.join(self.lq_root, "*")))
+            subfolders_gt = sorted(glob.glob(osp.join(self.gt_root, "*")))
 
         for subfolder_lq, subfolder_gt in zip(subfolders_lq, subfolders_gt):
             # get frame list for lq and gt
@@ -71,23 +71,24 @@ class VideoRecurrentTestDataset(data.Dataset):
             img_paths_gt = sorted(list(utils_video.scandir(subfolder_gt, full_path=True)))
 
             max_idx = len(img_paths_lq)
-            assert max_idx == len(img_paths_gt), (f'Different number of images in lq ({max_idx})'
-                                                  f' and gt folders ({len(img_paths_gt)})')
+            assert max_idx == len(img_paths_gt), (
+                f"Different number of images in lq ({max_idx})" f" and gt folders ({len(img_paths_gt)})"
+            )
 
-            self.data_info['lq_path'].extend(img_paths_lq)
-            self.data_info['gt_path'].extend(img_paths_gt)
-            self.data_info['folder'].extend([subfolder_name] * max_idx)
+            self.data_info["lq_path"].extend(img_paths_lq)
+            self.data_info["gt_path"].extend(img_paths_gt)
+            self.data_info["folder"].extend([subfolder_name] * max_idx)
             for i in range(max_idx):
-                self.data_info['idx'].append(f'{i}/{max_idx}')
+                self.data_info["idx"].append(f"{i}/{max_idx}")
             border_l = [0] * max_idx
-            for i in range(self.opt['num_frame'] // 2):
+            for i in range(self.opt["num_frame"] // 2):
                 border_l[i] = 1
                 border_l[max_idx - i - 1] = 1
-            self.data_info['border'].extend(border_l)
+            self.data_info["border"].extend(border_l)
 
             # cache data or save the frame list
             if self.cache_data:
-                print(f'Cache {subfolder_name} for VideoTestDataset...')
+                print(f"Cache {subfolder_name} for VideoTestDataset...")
                 self.imgs_lq[subfolder_name] = utils_video.read_img_seq(img_paths_lq)
                 self.imgs_gt[subfolder_name] = utils_video.read_img_seq(img_paths_gt)
             else:
@@ -95,14 +96,14 @@ class VideoRecurrentTestDataset(data.Dataset):
                 self.imgs_gt[subfolder_name] = img_paths_gt
 
         # Find unique folder strings
-        self.folders = sorted(list(set(self.data_info['folder'])))
-        self.sigma = opt['sigma'] / 255. if 'sigma' in opt else 0 # for non-blind video denoising
+        self.folders = sorted(list(set(self.data_info["folder"])))
+        self.sigma = opt["sigma"] / 255.0 if "sigma" in opt else 0  # for non-blind video denoising
 
     def __getitem__(self, index):
         folder = self.folders[index]
 
         if self.sigma:
-        # for non-blind video denoising
+            # for non-blind video denoising
             if self.cache_data:
                 imgs_gt = self.imgs_gt[folder]
             else:
@@ -115,7 +116,7 @@ class VideoRecurrentTestDataset(data.Dataset):
             t, _, h, w = imgs_lq.shape
             imgs_lq = torch.cat([imgs_lq, noise_level.expand(t, 1, h, w)], 1)
         else:
-        # for video sr and deblurring
+            # for video sr and deblurring
             if self.cache_data:
                 imgs_lq = self.imgs_lq[folder]
                 imgs_gt = self.imgs_gt[folder]
@@ -124,10 +125,10 @@ class VideoRecurrentTestDataset(data.Dataset):
                 imgs_gt = utils_video.read_img_seq(self.imgs_gt[folder])
 
         return {
-            'L': imgs_lq,
-            'H': imgs_gt,
-            'folder': folder,
-            'lq_path': self.imgs_lq[folder],
+            "L": imgs_lq,
+            "H": imgs_gt,
+            "folder": folder,
+            "lq_path": self.imgs_lq[folder],
         }
 
     def __len__(self):
@@ -170,17 +171,17 @@ class SingleVideoRecurrentTestDataset(data.Dataset):
     def __init__(self, opt):
         super(SingleVideoRecurrentTestDataset, self).__init__()
         self.opt = opt
-        self.cache_data = opt['cache_data']
-        self.lq_root = opt['dataroot_lq']
-        self.data_info = {'lq_path': [], 'folder': [], 'idx': [], 'border': []}
+        self.cache_data = opt["cache_data"]
+        self.lq_root = opt["dataroot_lq"]
+        self.data_info = {"lq_path": [], "folder": [], "idx": [], "border": []}
 
         self.imgs_lq = {}
-        if 'meta_info_file' in opt:
-            with open(opt['meta_info_file'], 'r') as fin:
-                subfolders = [line.split(' ')[0] for line in fin]
+        if "meta_info_file" in opt:
+            with open(opt["meta_info_file"], "r") as fin:
+                subfolders = [line.split(" ")[0] for line in fin]
                 subfolders_lq = [osp.join(self.lq_root, key) for key in subfolders]
         else:
-            subfolders_lq = sorted(glob.glob(osp.join(self.lq_root, '*')))
+            subfolders_lq = sorted(glob.glob(osp.join(self.lq_root, "*")))
 
         for subfolder_lq in subfolders_lq:
             # get frame list for lq and gt
@@ -189,25 +190,25 @@ class SingleVideoRecurrentTestDataset(data.Dataset):
 
             max_idx = len(img_paths_lq)
 
-            self.data_info['lq_path'].extend(img_paths_lq)
-            self.data_info['folder'].extend([subfolder_name] * max_idx)
+            self.data_info["lq_path"].extend(img_paths_lq)
+            self.data_info["folder"].extend([subfolder_name] * max_idx)
             for i in range(max_idx):
-                self.data_info['idx'].append(f'{i}/{max_idx}')
+                self.data_info["idx"].append(f"{i}/{max_idx}")
             border_l = [0] * max_idx
-            for i in range(self.opt['num_frame'] // 2):
+            for i in range(self.opt["num_frame"] // 2):
                 border_l[i] = 1
                 border_l[max_idx - i - 1] = 1
-            self.data_info['border'].extend(border_l)
+            self.data_info["border"].extend(border_l)
 
             # cache data or save the frame list
             if self.cache_data:
-                print(f'Cache {subfolder_name} for VideoTestDataset...')
+                print(f"Cache {subfolder_name} for VideoTestDataset...")
                 self.imgs_lq[subfolder_name] = utils_video.read_img_seq(img_paths_lq)
             else:
                 self.imgs_lq[subfolder_name] = img_paths_lq
 
         # Find unique folder strings
-        self.folders = sorted(list(set(self.data_info['folder'])))
+        self.folders = sorted(list(set(self.data_info["folder"])))
 
     def __getitem__(self, index):
         folder = self.folders[index]
@@ -218,9 +219,9 @@ class SingleVideoRecurrentTestDataset(data.Dataset):
             imgs_lq = utils_video.read_img_seq(self.imgs_lq[folder])
 
         return {
-            'L': imgs_lq,
-            'folder': folder,
-            'lq_path': self.imgs_lq[folder],
+            "L": imgs_lq,
+            "folder": folder,
+            "lq_path": self.imgs_lq[folder],
         }
 
     def __len__(self):
@@ -250,49 +251,49 @@ class VideoTestVimeo90KDataset(data.Dataset):
     def __init__(self, opt):
         super(VideoTestVimeo90KDataset, self).__init__()
         self.opt = opt
-        self.cache_data = opt['cache_data']
+        self.cache_data = opt["cache_data"]
         if self.cache_data:
-            raise NotImplementedError('cache_data in Vimeo90K-Test dataset is not implemented.')
-        self.gt_root, self.lq_root = opt['dataroot_gt'], opt['dataroot_lq']
-        self.data_info = {'lq_path': [], 'gt_path': [], 'folder': [], 'idx': [], 'border': []}
-        neighbor_list = [i + (9 - opt['num_frame']) // 2 for i in range(opt['num_frame'])]
+            raise NotImplementedError("cache_data in Vimeo90K-Test dataset is not implemented.")
+        self.gt_root, self.lq_root = opt["dataroot_gt"], opt["dataroot_lq"]
+        self.data_info = {"lq_path": [], "gt_path": [], "folder": [], "idx": [], "border": []}
+        neighbor_list = [i + (9 - opt["num_frame"]) // 2 for i in range(opt["num_frame"])]
 
-        with open(opt['meta_info_file'], 'r') as fin:
-            subfolders = [line.split(' ')[0] for line in fin]
+        with open(opt["meta_info_file"], "r") as fin:
+            subfolders = [line.split(" ")[0] for line in fin]
         for idx, subfolder in enumerate(subfolders):
-            gt_path = osp.join(self.gt_root, subfolder, 'im4.png')
-            self.data_info['gt_path'].append(gt_path)
-            lq_paths = [osp.join(self.lq_root, subfolder, f'im{i}.png') for i in neighbor_list]
-            self.data_info['lq_path'].append(lq_paths)
-            self.data_info['folder'].append('vimeo90k')
-            self.data_info['idx'].append(f'{idx}/{len(subfolders)}')
-            self.data_info['border'].append(0)
+            gt_path = osp.join(self.gt_root, subfolder, "im4.png")
+            self.data_info["gt_path"].append(gt_path)
+            lq_paths = [osp.join(self.lq_root, subfolder, f"im{i}.png") for i in neighbor_list]
+            self.data_info["lq_path"].append(lq_paths)
+            self.data_info["folder"].append("vimeo90k")
+            self.data_info["idx"].append(f"{idx}/{len(subfolders)}")
+            self.data_info["border"].append(0)
 
-        self.pad_sequence = opt.get('pad_sequence', False)
+        self.pad_sequence = opt.get("pad_sequence", False)
 
     def __getitem__(self, index):
-        lq_path = self.data_info['lq_path'][index]
-        gt_path = self.data_info['gt_path'][index]
+        lq_path = self.data_info["lq_path"][index]
+        gt_path = self.data_info["gt_path"][index]
         imgs_lq = utils_video.read_img_seq(lq_path)
         img_gt = utils_video.read_img_seq([gt_path])
         img_gt.squeeze_(0)
 
         if self.pad_sequence:  # pad the sequence: 7 frames to 8 frames
-            imgs_lq = torch.cat([imgs_lq, imgs_lq[-1:,...]], dim=0)
+            imgs_lq = torch.cat([imgs_lq, imgs_lq[-1:, ...]], dim=0)
 
         return {
-            'L': imgs_lq,  # (t, c, h, w)
-            'H': img_gt,  # (c, h, w)
-            'folder': self.data_info['folder'][index],  # folder name
-            'idx': self.data_info['idx'][index],  # e.g., 0/843
-            'border': self.data_info['border'][index],  # 0 for non-border
-            'lq_path': lq_path[self.opt['num_frame'] // 2]  # center frame
+            "L": imgs_lq,  # (t, c, h, w)
+            "H": img_gt,  # (c, h, w)
+            "folder": self.data_info["folder"][index],  # folder name
+            "idx": self.data_info["idx"][index],  # e.g., 0/843
+            "border": self.data_info["border"][index],  # 0 for non-border
+            "lq_path": lq_path[self.opt["num_frame"] // 2],  # center frame
         }
 
     def __len__(self):
-        return len(self.data_info['gt_path'])
-    
-    
+        return len(self.data_info["gt_path"])
+
+
 class SingleVideoRecurrentTestDataset(data.Dataset):
     """Single Video test dataset (only input LQ path).
 
@@ -329,19 +330,19 @@ class SingleVideoRecurrentTestDataset(data.Dataset):
     def __init__(self, opt):
         super(SingleVideoRecurrentTestDataset, self).__init__()
         self.opt = opt
-        self.cache_data = opt['cache_data']
-        self.lq_root = opt['dataroot_lq']
-        self.data_info = {'lq_path': [], 'folder': [], 'idx': [], 'border': []}
+        self.cache_data = opt["cache_data"]
+        self.lq_root = opt["dataroot_lq"]
+        self.data_info = {"lq_path": [], "folder": [], "idx": [], "border": []}
         # file client (io backend)
         self.file_client = None
 
         self.imgs_lq = {}
-        if 'meta_info_file' in opt:
-            with open(opt['meta_info_file'], 'r') as fin:
-                subfolders = [line.split(' ')[0] for line in fin]
+        if "meta_info_file" in opt:
+            with open(opt["meta_info_file"], "r") as fin:
+                subfolders = [line.split(" ")[0] for line in fin]
                 subfolders_lq = [osp.join(self.lq_root, key) for key in subfolders]
         else:
-            subfolders_lq = sorted(glob.glob(osp.join(self.lq_root, '*')))
+            subfolders_lq = sorted(glob.glob(osp.join(self.lq_root, "*")))
 
         for subfolder_lq in subfolders_lq:
             # get frame list for lq and gt
@@ -350,25 +351,25 @@ class SingleVideoRecurrentTestDataset(data.Dataset):
 
             max_idx = len(img_paths_lq)
 
-            self.data_info['lq_path'].extend(img_paths_lq)
-            self.data_info['folder'].extend([subfolder_name] * max_idx)
+            self.data_info["lq_path"].extend(img_paths_lq)
+            self.data_info["folder"].extend([subfolder_name] * max_idx)
             for i in range(max_idx):
-                self.data_info['idx'].append(f'{i}/{max_idx}')
+                self.data_info["idx"].append(f"{i}/{max_idx}")
             border_l = [0] * max_idx
-            for i in range(self.opt['num_frame'] // 2):
+            for i in range(self.opt["num_frame"] // 2):
                 border_l[i] = 1
                 border_l[max_idx - i - 1] = 1
-            self.data_info['border'].extend(border_l)
+            self.data_info["border"].extend(border_l)
 
             # cache data or save the frame list
             if self.cache_data:
-                logger.info(f'Cache {subfolder_name} for VideoTestDataset...')
+                logger.info(f"Cache {subfolder_name} for VideoTestDataset...")
                 self.imgs_lq[subfolder_name] = utils_video.read_img_seq(img_paths_lq)
             else:
                 self.imgs_lq[subfolder_name] = img_paths_lq
 
         # Find unique folder strings
-        self.folders = sorted(list(set(self.data_info['folder'])))
+        self.folders = sorted(list(set(self.data_info["folder"])))
 
     def __getitem__(self, index):
         folder = self.folders[index]
@@ -379,11 +380,10 @@ class SingleVideoRecurrentTestDataset(data.Dataset):
             imgs_lq = utils_video.read_img_seq(self.imgs_lq[folder])
 
         return {
-            'L': imgs_lq,
-            'folder': folder,
-            'lq_path': self.imgs_lq[folder],
+            "L": imgs_lq,
+            "folder": folder,
+            "lq_path": self.imgs_lq[folder],
         }
 
     def __len__(self):
         return len(self.folders)
-
