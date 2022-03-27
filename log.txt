@@ -1,0 +1,12 @@
+Test Results
+
+super resolution:
+    Average PSNR: 28.27 dB; SSIM: 0.8341; PSNR_Y: 29.60 dB; SSIM_Y: 0.8459
+
+deblur:
+    Average PSNR: 39.13 dB; SSIM: 0.9850; PSNR_Y: 40.74 dB; SSIM_Y: 0.9878
+    Average PSNR: 39.19 dB; SSIM: 0.9852; PSNR_Y: 40.81 dB; SSIM_Y: 0.9880
+
+denoise:
+    Average PSNR: 39.08 dB; SSIM: 0.9785; PSNR_Y: 41.23 dB; SSIM_Y: 0.9853
+

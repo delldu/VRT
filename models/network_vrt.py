@@ -14,13 +14,14 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from distutils.version import LooseVersion
 from torch.nn.modules.utils import _pair, _single
-import numpy as np
+# import numpy as np
 from functools import reduce, lru_cache
 from operator import mul
 
 from einops.layers.torch import Rearrange
 from typing import List
-
+from typing import Tuple
+from typing import Optional
 
 import pdb
 
@@ -212,7 +213,7 @@ class DropPath(nn.Module):
         return drop_path(x, self.drop_prob, self.training)
 
 
-def flow_warp(x, flow, interp_mode="bilinear", padding_mode="zeros", align_corners=True, use_pad_mask=False):
+def flow_warp(x, flow, interp_mode: str="bilinear", padding_mode: str="zeros"):
     """Warp an image or feature map with optical flow.
 
     Args:
@@ -224,13 +225,14 @@ def flow_warp(x, flow, interp_mode="bilinear", padding_mode="zeros", align_corne
         align_corners (bool): Before pytorch 1.3, the default value is
             align_corners=True. After pytorch 1.3, the default value is
             align_corners=False. Here, we use the True as default.
-        use_pad_mask (bool): only used for PWCNet, x is first padded with ones along the channel dimension.
-            The mask is generated according to the grid_sample results of the padded dimension.
 
 
     Returns:
         Tensor: Warped image or feature map.
     """
+
+    align_corners:bool=True
+
     # assert x.size()[-2:] == flow.size()[1:3] # temporaily turned off for image-wise shift
     n, _, h, w = x.size()
     # create mesh grid
@@ -239,12 +241,9 @@ def flow_warp(x, flow, interp_mode="bilinear", padding_mode="zeros", align_corne
         torch.arange(0, h, dtype=x.dtype, device=x.device), torch.arange(0, w, dtype=x.dtype, device=x.device)
     )
     grid = torch.stack((grid_x, grid_y), 2).float()  # W(x), H(y), 2
-    grid.requires_grad = False
+    # grid.requires_grad = False
 
     vgrid = grid + flow
-
-    # if use_pad_mask: # for PWCNet
-    #     x = F.pad(x, (0,0,0,0,0,1), mode='constant', value=1)
 
     # scale grid to [-1,1]
     if interp_mode == "nearest4":  # todo: bug, no gradient for flow model in this case!!! but the result is good
@@ -291,9 +290,6 @@ def flow_warp(x, flow, interp_mode="bilinear", padding_mode="zeros", align_corne
         output = F.grid_sample(
             x, vgrid_scaled, mode=interp_mode, padding_mode=padding_mode, align_corners=align_corners
         )
-
-        # if use_pad_mask: # for PWCNet
-        #     output = _flow_warp_masking(output)
 
         # TODO, what if align_corners=False
         return output
@@ -345,7 +341,7 @@ class DCNv2PackFlowGuided(ModulatedDeformConvPack):
             self.conv_offset[-1].weight.data.zero_()
             self.conv_offset[-1].bias.data.zero_()
 
-    def forward(self, x, x_flow_warpeds, x_current, flows):
+    def forward(self, x, x_flow_warpeds: List[torch.Tensor], x_current, flows: List[torch.Tensor]):
         out = self.conv_offset(torch.cat(x_flow_warpeds + [x_current] + flows, dim=1))
         o1, o2, mask = torch.chunk(out, 3, dim=1)
 
@@ -370,7 +366,7 @@ class DCNv2PackFlowGuided(ModulatedDeformConvPack):
         mask = torch.sigmoid(mask)
 
         return torchvision.ops.deform_conv2d(
-            x, offset, self.weight, self.bias, self.stride, self.padding, self.dilation, mask
+            x, offset, self.weight, self.bias, (self.stride, self.stride), (self.padding, self.padding), (self.dilation, self.dilation), mask
         )
 
 
@@ -430,18 +426,55 @@ class SpyNet(nn.Module):
     def process(self, ref, supp, w: int, h: int, w_floor: int, h_floor: int) -> List[torch.Tensor]:
         flow_list: List[torch.Tensor] = []
 
-        ref = [self.preprocess(ref)]
-        supp = [self.preprocess(supp)]
+        ref: List[torch.Tensor] = [self.preprocess(ref)]
+        supp: List[torch.Tensor] = [self.preprocess(supp)]
 
         for level in range(5):
-            ref.insert(0, F.avg_pool2d(input=ref[0], kernel_size=2, stride=2, count_include_pad=False))
-            supp.insert(0, F.avg_pool2d(input=supp[0], kernel_size=2, stride=2, count_include_pad=False))
+            ref.insert(0, F.avg_pool2d(ref[0], kernel_size=2, stride=2, count_include_pad=False))
+            supp.insert(0, F.avg_pool2d(supp[0], kernel_size=2, stride=2, count_include_pad=False))
 
         flow = ref[0].new_zeros(
             [ref[0].size(0), 2, int(math.floor(ref[0].size(2) / 2.0)), int(math.floor(ref[0].size(3) / 2.0))]
         )
 
-        for level in range(len(ref)):
+        # for level in range(len(ref)):
+        #     upsampled_flow = F.interpolate(input=flow, scale_factor=2.0, mode="bilinear", align_corners=True) * 2.0
+
+        #     if upsampled_flow.size(2) != ref[level].size(2):
+        #         upsampled_flow = F.pad(input=upsampled_flow, pad=[0, 0, 0, 1], mode="replicate")
+        #     if upsampled_flow.size(3) != ref[level].size(3):
+        #         upsampled_flow = F.pad(input=upsampled_flow, pad=[0, 1, 0, 0], mode="replicate")
+
+        #     flow = (
+        #         self.basic_module[level](
+        #             torch.cat(
+        #                 [
+        #                     ref[level],
+        #                     flow_warp(
+        #                         supp[level],
+        #                         upsampled_flow.permute(0, 2, 3, 1),
+        #                         interp_mode="bilinear",
+        #                         padding_mode="border",
+        #                     ),
+        #                     upsampled_flow,
+        #                 ],
+        #                 1,
+        #             )
+        #         )
+        #         + upsampled_flow
+        #     )
+
+        #     if level in self.return_levels:
+        #         scale = 2 ** (5 - level)  # level=5 (scale=1), level=4 (scale=2), level=3 (scale=4), level=2 (scale=8)
+        #         flow_out = F.interpolate(
+        #             input=flow, size=(h // scale, w // scale), mode="bilinear", align_corners=False
+        #         )
+        #         flow_out[:, 0, :, :] *= float(w // scale) / float(w_floor // scale)
+        #         flow_out[:, 1, :, :] *= float(h // scale) / float(h_floor // scale)
+        #         flow_list.insert(0, flow_out)
+
+
+        for level, model in enumerate(self.basic_module):
             upsampled_flow = F.interpolate(input=flow, scale_factor=2.0, mode="bilinear", align_corners=True) * 2.0
 
             if upsampled_flow.size(2) != ref[level].size(2):
@@ -450,7 +483,7 @@ class SpyNet(nn.Module):
                 upsampled_flow = F.pad(input=upsampled_flow, pad=[0, 1, 0, 0], mode="replicate")
 
             flow = (
-                self.basic_module[level](
+                model(
                     torch.cat(
                         [
                             ref[level],
@@ -471,7 +504,7 @@ class SpyNet(nn.Module):
             if level in self.return_levels:
                 scale = 2 ** (5 - level)  # level=5 (scale=1), level=4 (scale=2), level=3 (scale=4), level=2 (scale=8)
                 flow_out = F.interpolate(
-                    input=flow, size=(h // scale, w // scale), mode="bilinear", align_corners=False
+                    flow, size=(h // int(scale), w // int(scale)), mode="bilinear", align_corners=False
                 )
                 flow_out[:, 0, :, :] *= float(w // scale) / float(w_floor // scale)
                 flow_out[:, 1, :, :] *= float(h // scale) / float(h_floor // scale)
@@ -552,7 +585,7 @@ def window_reverse(windows, window_size, B, D, H, W):
     return x
 
 
-def get_window_size(x_size, window_size, shift_size=None):
+def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[List[int]]:
     """Get the window size and the shift size"""
 
     use_window_size = list(window_size)
@@ -563,7 +596,7 @@ def get_window_size(x_size, window_size, shift_size=None):
             use_window_size[i] = x_size[i]
             if shift_size is not None:
                 use_shift_size[i] = 0
-
+    # xxxx8888
     if shift_size is None:
         return tuple(use_window_size)
     else:
@@ -571,10 +604,11 @@ def get_window_size(x_size, window_size, shift_size=None):
 
 
 @lru_cache()
-def compute_mask(D, H, W, window_size, shift_size, device):
+# def compute_mask(D, H, W, window_size, shift_size, device):
+def compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: List[int]):
     """Compute attnetion mask for input of size (D, H, W). @lru_cache caches each stage results."""
 
-    img_mask = torch.zeros((1, D, H, W, 1), device=device)  # 1 Dp Hp Wp 1
+    img_mask = torch.zeros((1, D, H, W, 1))  # 1 Dp Hp Wp 1
     cnt = 0
     for d in slice(-window_size[0]), slice(-window_size[0], -shift_size[0]), slice(-shift_size[0], None):
         for h in slice(-window_size[1]), slice(-window_size[1], -shift_size[1]), slice(-shift_size[1], None):
@@ -691,6 +725,7 @@ class WindowAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
 
         # mutual attention with sine position encoding
+        # xxxx8888
         if self.mut_attn:
             self.register_buffer(
                 "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
@@ -698,10 +733,16 @@ class WindowAttention(nn.Module):
             self.qkv_mut = nn.Linear(dim, dim * 3, bias=qkv_bias)
             self.proj = nn.Linear(2 * dim, dim)
 
+        # self.register_buffer(
+        #     "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
+        # )
+        # self.qkv_mut = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        # self.proj = nn.Linear(2 * dim, dim)
+
         self.softmax = nn.Softmax(dim=-1)
         trunc_normal_(self.relative_position_bias_table, std=0.02)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask: Optional[torch.Tensor]=None):
         """Forward function.
 
         Args:
@@ -736,7 +777,7 @@ class WindowAttention(nn.Module):
 
         return x
 
-    def attention(self, q, k, v, mask, x_shape, relative_position_encoding=True):
+    def attention(self, q, k, v, mask: Optional[torch.Tensor], x_shape: List[int], relative_position_encoding: bool=True):
         B_, N, C = x_shape
         attn = (q * self.scale) @ k.transpose(-2, -1)
 
@@ -826,8 +867,6 @@ class TMSA(nn.Module):
         drop_path (float, optional): Stochastic depth rate. Default: 0.0.
         act_layer (nn.Module, optional): Activation layer. Default: nn.GELU.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm.
-        use_checkpoint_attn (bool): If True, use torch.checkpoint for attention modules. Default: False.
-        use_checkpoint_ffn (bool): If True, use torch.checkpoint for feed-forward modules. Default: False.
     """
 
     def __init__(
@@ -844,8 +883,6 @@ class TMSA(nn.Module):
         drop_path=0.0,
         act_layer=nn.GELU,
         norm_layer=nn.LayerNorm,
-        use_checkpoint_attn=False,
-        use_checkpoint_ffn=False,
     ):
         super().__init__()
         self.dim = dim
@@ -853,8 +890,6 @@ class TMSA(nn.Module):
         self.num_heads = num_heads
         self.window_size = window_size
         self.shift_size = shift_size
-        self.use_checkpoint_attn = use_checkpoint_attn
-        self.use_checkpoint_ffn = use_checkpoint_ffn
 
         # num_heads = 6
         # window_size = (2, 8, 8)
@@ -864,8 +899,6 @@ class TMSA(nn.Module):
         # qkv_bias = True
         # qk_scale = None
         # drop_path = 0.0
-        # use_checkpoint_attn = False
-        # use_checkpoint_ffn = False
 
         assert 0 <= self.shift_size[0] < self.window_size[0], "shift_size must in 0-window_size"
         assert 0 <= self.shift_size[1] < self.window_size[1], "shift_size must in 0-window_size"
@@ -941,17 +974,8 @@ class TMSA(nn.Module):
         """
 
         # attention
-        if self.use_checkpoint_attn:
-            x = x + checkpoint.checkpoint(self.forward_part1, x, mask_matrix)
-        else:
-            x = x + self.forward_part1(x, mask_matrix)
-
-        # feed-forward
-        if self.use_checkpoint_ffn:
-            x = x + checkpoint.checkpoint(self.forward_part2, x)
-        else:
-            x = x + self.forward_part2(x)
-
+        x = x + self.forward_part1(x, mask_matrix)
+        x = x + self.forward_part2(x)
         return x
 
 
@@ -971,8 +995,6 @@ class TMSAG(nn.Module):
         qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
         drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0
         norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
-        use_checkpoint_attn (bool): If True, use torch.checkpoint for attention modules. Default: False.
-        use_checkpoint_ffn (bool): If True, use torch.checkpoint for feed-forward modules. Default: False.
     """
 
     def __init__(
@@ -989,8 +1011,6 @@ class TMSAG(nn.Module):
         qk_scale=None,
         drop_path=0.0,
         norm_layer=nn.LayerNorm,
-        use_checkpoint_attn=False,
-        use_checkpoint_ffn=False,
     ):
         super().__init__()
         self.input_resolution = input_resolution
@@ -1012,8 +1032,6 @@ class TMSAG(nn.Module):
                     qk_scale=qk_scale,
                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                     norm_layer=norm_layer,
-                    use_checkpoint_attn=use_checkpoint_attn,
-                    use_checkpoint_ffn=use_checkpoint_ffn,
                 )
                 for i in range(depth)
             ]
@@ -1033,10 +1051,10 @@ class TMSAG(nn.Module):
         window_size, shift_size = get_window_size((D, H, W), self.window_size, self.shift_size)
         # x = rearrange(x, 'b c d h w -> b d h w c')
         x = self.BxCxDxHxW_BxDxHxWxC(x)
-        Dp = int(np.ceil(D / window_size[0])) * window_size[0]
-        Hp = int(np.ceil(H / window_size[1])) * window_size[1]
-        Wp = int(np.ceil(W / window_size[2])) * window_size[2]
-        attn_mask = compute_mask(Dp, Hp, Wp, window_size, shift_size, x.device)
+        Dp = int(math.ceil(D / window_size[0])) * window_size[0]
+        Hp = int(math.ceil(H / window_size[1])) * window_size[1]
+        Wp = int(math.ceil(W / window_size[2])) * window_size[2]
+        attn_mask = compute_mask(Dp, Hp, Wp, window_size, shift_size).to(x.device)
 
         for blk in self.blocks:
             x = blk(x, attn_mask)
@@ -1061,8 +1079,6 @@ class RTMSA(nn.Module):
         qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
         drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0.
         norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm.
-        use_checkpoint_attn (bool): If True, use torch.checkpoint for attention modules. Default: False.
-        use_checkpoint_ffn (bool): If True, use torch.checkpoint for feed-forward modules. Default: False.
     """
 
     def __init__(
@@ -1077,8 +1093,6 @@ class RTMSA(nn.Module):
         qk_scale=None,
         drop_path=0.0,
         norm_layer=nn.LayerNorm,
-        use_checkpoint_attn=False,
-        use_checkpoint_ffn=None,
     ):
         super(RTMSA, self).__init__()
         self.dim = dim
@@ -1096,8 +1110,6 @@ class RTMSA(nn.Module):
             qk_scale=qk_scale,
             drop_path=drop_path,
             norm_layer=norm_layer,
-            use_checkpoint_attn=use_checkpoint_attn,
-            use_checkpoint_ffn=use_checkpoint_ffn,
         )
 
         self.linear = nn.Linear(dim, dim)
@@ -1126,8 +1138,6 @@ class Stage(nn.Module):
         deformable_groups (float): Number of deformable groups. Default: 16.
         reshape (str): Downscale (down), upscale (up) or keep the size (none).
         max_residue_magnitude (float): Maximum magnitude of the residual of optical flow.
-        use_checkpoint_attn (bool): If True, use torch.checkpoint for attention modules. Default: False.
-        use_checkpoint_ffn (bool): If True, use torch.checkpoint for feed-forward modules. Default: False.
     """
 
     def __init__(
@@ -1148,8 +1158,6 @@ class Stage(nn.Module):
         deformable_groups=16,
         reshape=None,
         max_residue_magnitude=10,
-        use_checkpoint_attn=False,
-        use_checkpoint_ffn=False,
     ):
         super(Stage, self).__init__()
         self.pa_frames = pa_frames
@@ -1187,8 +1195,6 @@ class Stage(nn.Module):
             qk_scale=qk_scale,
             drop_path=drop_path,
             norm_layer=norm_layer,
-            use_checkpoint_attn=use_checkpoint_attn,
-            use_checkpoint_ffn=use_checkpoint_ffn,
         )
         self.linear1 = nn.Linear(dim, dim)
 
@@ -1205,8 +1211,6 @@ class Stage(nn.Module):
             qk_scale=qk_scale,
             drop_path=drop_path,
             norm_layer=norm_layer,
-            use_checkpoint_attn=True,
-            use_checkpoint_ffn=use_checkpoint_ffn,
         )
         self.linear2 = nn.Linear(dim, dim)
 
@@ -1222,12 +1226,13 @@ class Stage(nn.Module):
         )
         self.pa_fuse = Mlp_GEGLU(dim * (1 + 2), dim * (1 + 2), dim)
 
+
     def forward(self, x, flows_backward, flows_forward):
         x = self.reshape(x)
         x = self.linear1(self.residual_group1(x).transpose(1, 4)).transpose(1, 4) + x
         x = self.linear2(self.residual_group2(x).transpose(1, 4)).transpose(1, 4) + x
         x = x.transpose(1, 2)
-
+        # 'get_aligned_feature_2frames'
         x_backward, x_forward = getattr(self, f"get_aligned_feature_{self.pa_frames}frames")(
             x, flows_backward, flows_forward
         )
@@ -1399,8 +1404,6 @@ class VideoFormer(nn.Module):
         deformable_groups (float): Number of deformable groups. Default: 16.
         recal_all_flows (bool): If True, derive (t,t+2) and (t,t+3) flows from (t,t+1). Default: False.
         nonblind_denoising (bool): If True, conduct experiments on non-blind denoising. Default: False.
-        use_checkpoint_attn (bool): If True, use torch.checkpoint for attention modules. Default: False.
-        use_checkpoint_ffn (bool): If True, use torch.checkpoint for feed-forward modules. Default: False.
         no_checkpoint_attn_blocks (list[int]): Layers without torch.checkpoint for attention modules.
         no_checkpoint_ffn_blocks (list[int]): Layers without torch.checkpoint for feed-forward modules.
     """
@@ -1426,8 +1429,6 @@ class VideoFormer(nn.Module):
         deformable_groups=16,
         recal_all_flows=False,
         nonblind_denoising=False,
-        use_checkpoint_attn=False,
-        use_checkpoint_ffn=False,
         no_checkpoint_attn_blocks=[],
         no_checkpoint_ffn_blocks=[],
     ):
@@ -1452,10 +1453,10 @@ class VideoFormer(nn.Module):
         reshapes = ["none", "down", "down", "down", "up", "up", "up"]
         scales = [1, 2, 4, 8, 4, 2, 1]
         use_checkpoint_attns = [
-            False if i in no_checkpoint_attn_blocks else use_checkpoint_attn for i in range(len(depths))
+            False for i in range(len(depths))
         ]
         use_checkpoint_ffns = [
-            False if i in no_checkpoint_ffn_blocks else use_checkpoint_ffn for i in range(len(depths))
+            False for i in range(len(depths))
         ]
 
         # stage 1- 7
@@ -1480,8 +1481,6 @@ class VideoFormer(nn.Module):
                     deformable_groups=deformable_groups,
                     reshape=reshapes[i],
                     max_residue_magnitude=10 / scales[i],
-                    use_checkpoint_attn=use_checkpoint_attns[i],
-                    use_checkpoint_ffn=use_checkpoint_ffns[i],
                 ),
             )
 
@@ -1509,8 +1508,6 @@ class VideoFormer(nn.Module):
                     qk_scale=qk_scale,
                     drop_path=dpr[sum(depths[:i]) : sum(depths[: i + 1])],
                     norm_layer=norm_layer,
-                    use_checkpoint_attn=use_checkpoint_attns[i],
-                    use_checkpoint_ffn=use_checkpoint_ffns[i],
                 )
             )
 
@@ -1573,32 +1570,35 @@ class VideoFormer(nn.Module):
             _, _, C, H, W = x.shape
             return x + torch.nn.functional.interpolate(x_lq, size=(C, H, W), mode="trilinear", align_corners=False)
 
-    def get_flows(self, x):
+    def get_flows(self, x)-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Get flows for 2 frames, 4 frames or 6 frames."""
 
-        if self.pa_frames == 2:
-            flows_backward, flows_forward = self.get_flow_2frames(x)
-        elif self.pa_frames == 4:
-            flows_backward_2frames, flows_forward_2frames = self.get_flow_2frames(x)
-            flows_backward_4frames, flows_forward_4frames = self.get_flow_4frames(
-                flows_forward_2frames, flows_backward_2frames
-            )
-            flows_backward = flows_backward_2frames + flows_backward_4frames
-            flows_forward = flows_forward_2frames + flows_forward_4frames
-        elif self.pa_frames == 6:
-            flows_backward_2frames, flows_forward_2frames = self.get_flow_2frames(x)
-            flows_backward_4frames, flows_forward_4frames = self.get_flow_4frames(
-                flows_forward_2frames, flows_backward_2frames
-            )
-            flows_backward_6frames, flows_forward_6frames = self.get_flow_6frames(
-                flows_forward_2frames, flows_backward_2frames, flows_forward_4frames, flows_backward_4frames
-            )
-            flows_backward = flows_backward_2frames + flows_backward_4frames + flows_backward_6frames
-            flows_forward = flows_forward_2frames + flows_forward_4frames + flows_forward_6frames
+        # if self.pa_frames == 4:
+        #     flows_backward_2frames, flows_forward_2frames = self.get_flow_2frames(x)
+        #     flows_backward_4frames, flows_forward_4frames = self.get_flow_4frames(
+        #         flows_forward_2frames, flows_backward_2frames
+        #     )
+        #     flows_backward = flows_backward_2frames + flows_backward_4frames
+        #     flows_forward = flows_forward_2frames + flows_forward_4frames
+        # elif self.pa_frames == 6:
+        #     flows_backward_2frames, flows_forward_2frames = self.get_flow_2frames(x)
+        #     flows_backward_4frames, flows_forward_4frames = self.get_flow_4frames(
+        #         flows_forward_2frames, flows_backward_2frames
+        #     )
+        #     flows_backward_6frames, flows_forward_6frames = self.get_flow_6frames(
+        #         flows_forward_2frames, flows_backward_2frames, flows_forward_4frames, flows_backward_4frames
+        #     )
+        #     flows_backward = flows_backward_2frames + flows_backward_4frames + flows_backward_6frames
+        #     flows_forward = flows_forward_2frames + flows_forward_4frames + flows_forward_6frames
+        # else: # self.pa_frames == 2:
+        #     flows_backward, flows_forward = self.get_flow_2frames(x)
+        # self.pa_frames == 2
+
+        flows_backward, flows_forward = self.get_flow_2frames(x)
 
         return flows_backward, flows_forward
 
-    def get_flow_2frames(self, x):
+    def get_flow_2frames(self, x)-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Get flow between frames t and t+1 from x."""
 
         b, n, c, h, w = x.size()
@@ -1608,18 +1608,19 @@ class VideoFormer(nn.Module):
         # backward
         flows_backward = self.spynet(x_1, x_2)
         flows_backward = [
-            flow.view(b, n - 1, 2, h // (2 ** i), w // (2 ** i)) for flow, i in zip(flows_backward, range(4))
+            flow.view(b, n - 1, 2, int(h // (2 ** i)), int(w // (2 ** i))) for flow, i in zip(flows_backward, range(4))
         ]
 
         # forward
         flows_forward = self.spynet(x_2, x_1)
         flows_forward = [
-            flow.view(b, n - 1, 2, h // (2 ** i), w // (2 ** i)) for flow, i in zip(flows_forward, range(4))
+            flow.view(b, n - 1, 2, int(h // (2 ** i)), int(w // (2 ** i))) for flow, i in zip(flows_forward, range(4))
         ]
 
+        # len(flows_backward) -- 4, len(flows_forward) -- 4
         return flows_backward, flows_forward
 
-    def get_flow_4frames(self, flows_forward, flows_backward):
+    def get_flow_4frames(self, flows_forward: List[torch.Tensor], flows_backward: List[torch.Tensor])->Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Get flow between t and t+2 from (t,t+1) and (t+1,t+2)."""
 
         # backward
@@ -1643,9 +1644,12 @@ class VideoFormer(nn.Module):
                 flow_list.append(flow_n1 + flow_warp(flow_n2, flow_n1.permute(0, 2, 3, 1)))  # flow from i-2 to i
             flows_forward2.append(torch.stack(flow_list, 1))
 
+        # xxxx8888
+        pdb.set_trace()
+
         return flows_backward2, flows_forward2
 
-    def get_flow_6frames(self, flows_forward, flows_backward, flows_forward2, flows_backward2):
+    def get_flow_6frames(self, flows_forward: List[torch.Tensor], flows_backward: List[torch.Tensor], flows_forward2: List[torch.Tensor], flows_backward2: List[torch.Tensor])-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Get flow between t and t+3 from (t,t+2) and (t+2,t+3)."""
 
         # backward
@@ -1669,9 +1673,12 @@ class VideoFormer(nn.Module):
                 flow_list.append(flow_n1 + flow_warp(flow_n2, flow_n1.permute(0, 2, 3, 1)))  # flow from i-3 to i
             flows_forward3.append(torch.stack(flow_list, 1))
 
+        # xxxx8888
+        pdb.set_trace()
+
         return flows_backward3, flows_forward3
 
-    def get_aligned_image_2frames(self, x, flows_backward, flows_forward):
+    def get_aligned_image_2frames(self, x, flows_backward, flows_forward)-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Parallel feature warping for 2 frames."""
 
         # backward
