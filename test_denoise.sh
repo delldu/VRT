@@ -3,6 +3,6 @@ python main_test_vrt.py \
 	--sigma 10 \
 	--folder_lq testsets/Set8 \
 	--folder_gt testsets/Set8 \
-	--tile 12 128 128 \
+	--tile 10 128 128 \
 	--tile_overlap 2 20 20
 

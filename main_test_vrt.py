@@ -334,6 +334,7 @@ def prepare_model_dataset(args):
     # model.load_state_dict(pretrained_model["params"] if "params" in pretrained_model.keys() else pretrained_model)
 
     model_load(model, model_path)
+    model = torch.jit.script(model)
 
     # download datasets
     if os.path.exists(f"{args.folder_lq}"):

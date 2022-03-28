@@ -3,21 +3,15 @@
 # This source code is licensed under the BSD license found in the
 # LICENSE file in the root directory of this source tree.
 
-
-import os
 import warnings
 import math
 import torch
 import torch.nn as nn
 import torchvision
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
 from distutils.version import LooseVersion
-from torch.nn.modules.utils import _pair, _single
 
-# import numpy as np
-from functools import reduce, lru_cache
-from operator import mul
+# from functools import reduce, lru_cache
 
 from einops.layers.torch import Rearrange
 from typing import List
@@ -43,7 +37,7 @@ class ModulatedDeformConv(nn.Module):
         super(ModulatedDeformConv, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.kernel_size = _pair(kernel_size)
+        self.kernel_size = (kernel_size, kernel_size)
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
@@ -52,7 +46,7 @@ class ModulatedDeformConv(nn.Module):
         self.with_bias = bias
         # enable compatibility with nn.Conv2d
         self.transposed = False
-        self.output_padding = _single(0)
+        self.output_padding = 0
 
         self.weight = nn.Parameter(torch.Tensor(out_channels, in_channels // groups, *self.kernel_size))
         if bias:
@@ -69,10 +63,6 @@ class ModulatedDeformConv(nn.Module):
         self.weight.data.uniform_(-stdv, stdv)
         if self.bias is not None:
             self.bias.data.zero_()
-
-    # def forward(self, x, offset, mask):
-    #     return modulated_deform_conv(x, offset, mask, self.weight, self.bias, self.stride, self.padding, self.dilation,
-    #                                  self.groups, self.deformable_groups)
 
 
 class ModulatedDeformConvPack(ModulatedDeformConv):
@@ -100,9 +90,9 @@ class ModulatedDeformConvPack(ModulatedDeformConv):
             self.in_channels,
             self.deformable_groups * 3 * self.kernel_size[0] * self.kernel_size[1],
             kernel_size=self.kernel_size,
-            stride=_pair(self.stride),
-            padding=_pair(self.padding),
-            dilation=_pair(self.dilation),
+            stride=(self.stride, self.stride),
+            padding=(self.padding, self.padding),
+            dilation=(self.dilation, self.dilation),
             bias=True,
         )
         self.init_weights()
@@ -112,14 +102,6 @@ class ModulatedDeformConvPack(ModulatedDeformConv):
         if hasattr(self, "conv_offset"):
             self.conv_offset.weight.data.zero_()
             self.conv_offset.bias.data.zero_()
-
-    # def forward(self, x):
-    #     out = self.conv_offset(x)
-    #     o1, o2, mask = torch.chunk(out, 3, dim=1)
-    #     offset = torch.cat((o1, o2), dim=1)
-    #     mask = torch.sigmoid(mask)
-    #     return modulated_deform_conv(x, offset, mask, self.weight, self.bias, self.stride, self.padding, self.dilation,
-    #                                  self.groups, self.deformable_groups)
 
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
@@ -282,7 +264,7 @@ def flow_warp(x, flow, interp_mode: str = "bilinear", padding_mode: str = "zeros
             align_corners=align_corners,
         )
 
-        return torch.cat([output00, output01, output10, output11], 1)
+        return torch.cat([output00, output01, output10, output11], dim=1)
 
     else:
         vgrid_x = 2.0 * vgrid[:, :, :, 0] / max(w - 1, 1) - 1.0
@@ -348,20 +330,23 @@ class DCNv2PackFlowGuided(ModulatedDeformConvPack):
 
         # offset
         offset = self.max_residue_magnitude * torch.tanh(torch.cat((o1, o2), dim=1))
-        if self.pa_frames == 2:
-            offset = offset + flows[0].flip(1).repeat(1, offset.size(1) // 2, 1, 1)
-        elif self.pa_frames == 4:
-            offset1, offset2 = torch.chunk(offset, 2, dim=1)
-            offset1 = offset1 + flows[0].flip(1).repeat(1, offset1.size(1) // 2, 1, 1)
-            offset2 = offset2 + flows[1].flip(1).repeat(1, offset2.size(1) // 2, 1, 1)
-            offset = torch.cat([offset1, offset2], dim=1)
-        elif self.pa_frames == 6:
-            offset = self.max_residue_magnitude * torch.tanh(torch.cat((o1, o2), dim=1))
-            offset1, offset2, offset3 = torch.chunk(offset, 3, dim=1)
-            offset1 = offset1 + flows[0].flip(1).repeat(1, offset1.size(1) // 2, 1, 1)
-            offset2 = offset2 + flows[1].flip(1).repeat(1, offset2.size(1) // 2, 1, 1)
-            offset3 = offset3 + flows[2].flip(1).repeat(1, offset3.size(1) // 2, 1, 1)
-            offset = torch.cat([offset1, offset2, offset3], dim=1)
+        # if self.pa_frames == 2:
+        #     offset = offset + flows[0].flip(1).repeat(1, offset.size(1) // 2, 1, 1)
+        # elif self.pa_frames == 4:
+        #     offset1, offset2 = torch.chunk(offset, 2, dim=1)
+        #     offset1 = offset1 + flows[0].flip(1).repeat(1, offset1.size(1) // 2, 1, 1)
+        #     offset2 = offset2 + flows[1].flip(1).repeat(1, offset2.size(1) // 2, 1, 1)
+        #     offset = torch.cat([offset1, offset2], dim=1)
+        # elif self.pa_frames == 6:
+        #     offset = self.max_residue_magnitude * torch.tanh(torch.cat((o1, o2), dim=1))
+        #     offset1, offset2, offset3 = torch.chunk(offset, 3, dim=1)
+        #     offset1 = offset1 + flows[0].flip(1).repeat(1, offset1.size(1) // 2, 1, 1)
+        #     offset2 = offset2 + flows[1].flip(1).repeat(1, offset2.size(1) // 2, 1, 1)
+        #     offset3 = offset3 + flows[2].flip(1).repeat(1, offset3.size(1) // 2, 1, 1)
+        #     offset = torch.cat([offset1, offset2, offset3], dim=1)
+
+        # self.pa_frames == 2
+        offset = offset + flows[0].flip(1).repeat(1, offset.size(1) // 2, 1, 1)
 
         # mask
         mask = torch.sigmoid(mask)
@@ -476,23 +461,9 @@ class SpyNet(nn.Module):
                 upsampled_flow = F.pad(input=upsampled_flow, pad=[0, 0, 0, 1], mode="replicate")
             if upsampled_flow.size(3) != ref[level].size(3):
                 upsampled_flow = F.pad(input=upsampled_flow, pad=[0, 1, 0, 0], mode="replicate")
-
+            flow_temp = flow_warp(supp[level], upsampled_flow.permute(0, 2, 3, 1), interp_mode="bilinear", padding_mode="border")
             flow = (
-                model(
-                    torch.cat(
-                        [
-                            ref[level],
-                            flow_warp(
-                                supp[level],
-                                upsampled_flow.permute(0, 2, 3, 1),
-                                interp_mode="bilinear",
-                                padding_mode="border",
-                            ),
-                            upsampled_flow,
-                        ],
-                        1,
-                    )
-                )
+                model(torch.cat([ref[level], flow_temp, upsampled_flow], dim = 1))
                 + upsampled_flow
             )
 
@@ -581,22 +552,6 @@ def window_reverse(windows, window_size: List[int], B: int, D: int, H: int, W: i
     x = x.permute(0, 1, 4, 2, 5, 3, 6, 7).contiguous().view(B, D, H, W, -1)
 
     return x
-
-
-# def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[List[int]]:
-
-#     """Get the window size and the shift size"""
-#     use_window_size = list(window_size)
-#     use_shift_size = list(shift_size)
-#     for i in range(len(x_size)):
-#         if x_size[i] <= window_size[i]:
-#             use_window_size[i] = x_size[i]
-#             use_shift_size[i] = 0
-
-#     # xxxx8888
-#     # pdb.set_trace()
-#     return tuple(use_window_size), tuple(use_shift_size)
-
 
 def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[int]:
 
@@ -812,7 +767,7 @@ class WindowAttention(nn.Module):
             )  # B_, nH, N/2, C
             x1_aligned = self.attention(q2, k1, v1, mask, (B_, N // 2, C), relative_position_encoding=False)
             x2_aligned = self.attention(q1, k2, v2, mask, (B_, N // 2, C), relative_position_encoding=False)
-            x_out = torch.cat([torch.cat([x1_aligned, x2_aligned], 1), x_out], 2)
+            x_out = torch.cat([torch.cat([x1_aligned, x2_aligned], 1), x_out], dim=2)
 
         # projection
         x = self.proj(x_out)
@@ -969,7 +924,6 @@ class TMSA(nn.Module):
 
         _, Dp, Hp, Wp, _ = x.shape
         # cyclic shift
-        # xxxx8888
         # shift_size -- (3, 4, 4), (0, 0, 0) ...
         # >>> any(i > 0 for i in (0,0,0)) -- False
         # >>> any(i > 0 for i in (1,0,0)) -- True
@@ -1309,123 +1263,6 @@ class Stage(nn.Module):
 
         return torch.stack(x_backward, dim=1), torch.stack(x_forward, dim=1)
 
-    # def get_aligned_feature_4frames(self, x, flows_backward, flows_forward):
-    #     """Parallel feature warping for 4 frames."""
-
-    #     # backward
-    #     n = x.size(1)
-    #     x_backward = [torch.zeros_like(x[:, -1, ...])]
-    #     for i in range(n, 1, -1):
-    #         x_i = x[:, i - 1, ...]
-    #         flow1 = flows_backward[0][:, i - 2, ...]
-    #         if i == n:
-    #             x_ii = torch.zeros_like(x[:, n - 2, ...])
-    #             flow2 = torch.zeros_like(flows_backward[1][:, n - 3, ...])
-    #         else:
-    #             x_ii = x[:, i, ...]
-    #             flow2 = flows_backward[1][:, i - 2, ...]
-
-    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i+1 aligned towards i
-    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i+2 aligned towards i
-    #         x_backward.insert(
-    #             0,
-    #             self.pa_deform(torch.cat([x_i, x_ii], 1), [x_i_warped, x_ii_warped], x[:, i - 2, ...], [flow1, flow2]),
-    #         )
-
-    #     # forward
-    #     x_forward = [torch.zeros_like(x[:, 0, ...])]
-    #     for i in range(-1, n - 2):
-    #         x_i = x[:, i + 1, ...]
-    #         flow1 = flows_forward[0][:, i + 1, ...]
-    #         if i == -1:
-    #             x_ii = torch.zeros_like(x[:, 1, ...])
-    #             flow2 = torch.zeros_like(flows_forward[1][:, 0, ...])
-    #         else:
-    #             x_ii = x[:, i, ...]
-    #             flow2 = flows_forward[1][:, i, ...]
-
-    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i-1 aligned towards i
-    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i-2 aligned towards i
-    #         x_forward.append(
-    #             self.pa_deform(torch.cat([x_i, x_ii], 1), [x_i_warped, x_ii_warped], x[:, i + 2, ...], [flow1, flow2])
-    #         )
-
-    #     return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
-
-    # def get_aligned_feature_6frames(self, x, flows_backward, flows_forward):
-    #     """Parallel feature warping for 6 frames."""
-
-    #     # backward
-    #     n = x.size(1)
-    #     x_backward = [torch.zeros_like(x[:, -1, ...])]
-    #     for i in range(n + 1, 2, -1):
-    #         x_i = x[:, i - 2, ...]
-    #         flow1 = flows_backward[0][:, i - 3, ...]
-    #         if i == n + 1:
-    #             x_ii = torch.zeros_like(x[:, -1, ...])
-    #             flow2 = torch.zeros_like(flows_backward[1][:, -1, ...])
-    #             x_iii = torch.zeros_like(x[:, -1, ...])
-    #             flow3 = torch.zeros_like(flows_backward[2][:, -1, ...])
-    #         elif i == n:
-    #             x_ii = x[:, i - 1, ...]
-    #             flow2 = flows_backward[1][:, i - 3, ...]
-    #             x_iii = torch.zeros_like(x[:, -1, ...])
-    #             flow3 = torch.zeros_like(flows_backward[2][:, -1, ...])
-    #         else:
-    #             x_ii = x[:, i - 1, ...]
-    #             flow2 = flows_backward[1][:, i - 3, ...]
-    #             x_iii = x[:, i, ...]
-    #             flow3 = flows_backward[2][:, i - 3, ...]
-
-    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i+1 aligned towards i
-    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i+2 aligned towards i
-    #         x_iii_warped = flow_warp(x_iii, flow3.permute(0, 2, 3, 1), "bilinear")  # frame i+3 aligned towards i
-    #         x_backward.insert(
-    #             0,
-    #             self.pa_deform(
-    #                 torch.cat([x_i, x_ii, x_iii], 1),
-    #                 [x_i_warped, x_ii_warped, x_iii_warped],
-    #                 x[:, i - 3, ...],
-    #                 [flow1, flow2, flow3],
-    #             ),
-    #         )
-
-    #     # forward
-    #     x_forward = [torch.zeros_like(x[:, 0, ...])]
-    #     for i in range(0, n - 1):
-    #         x_i = x[:, i, ...]
-    #         flow1 = flows_forward[0][:, i, ...]
-    #         if i == 0:
-    #             x_ii = torch.zeros_like(x[:, 0, ...])
-    #             flow2 = torch.zeros_like(flows_forward[1][:, 0, ...])
-    #             x_iii = torch.zeros_like(x[:, 0, ...])
-    #             flow3 = torch.zeros_like(flows_forward[2][:, 0, ...])
-    #         elif i == 1:
-    #             x_ii = x[:, i - 1, ...]
-    #             flow2 = flows_forward[1][:, i - 1, ...]
-    #             x_iii = torch.zeros_like(x[:, 0, ...])
-    #             flow3 = torch.zeros_like(flows_forward[2][:, 0, ...])
-    #         else:
-    #             x_ii = x[:, i - 1, ...]
-    #             flow2 = flows_forward[1][:, i - 1, ...]
-    #             x_iii = x[:, i - 2, ...]
-    #             flow3 = flows_forward[2][:, i - 2, ...]
-
-    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i-1 aligned towards i
-    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i-2 aligned towards i
-    #         x_iii_warped = flow_warp(x_iii, flow3.permute(0, 2, 3, 1), "bilinear")  # frame i-3 aligned towards i
-    #         x_forward.append(
-    #             self.pa_deform(
-    #                 torch.cat([x_i, x_ii, x_iii], 1),
-    #                 [x_i_warped, x_ii_warped, x_iii_warped],
-    #                 x[:, i + 1, ...],
-    #                 [flow1, flow2, flow3],
-    #             )
-    #         )
-
-    #     return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
-
-
 class VideoFormer(nn.Module):
     """Video Restoration Transformer (VRT).
         A PyTorch impl of : `VRT: A Video Restoration Transformer`  -
@@ -1448,10 +1285,7 @@ class VideoFormer(nn.Module):
         norm_layer (obj): Normalization layer. Default: nn.LayerNorm.
         pa_frames (float): Number of warpped frames. Default: 2.
         deformable_groups (float): Number of deformable groups. Default: 16.
-        recal_all_flows (bool): If True, derive (t,t+2) and (t,t+3) flows from (t,t+1). Default: False.
         nonblind_denoising (bool): If True, conduct experiments on non-blind denoising. Default: False.
-        no_checkpoint_attn_blocks (list[int]): Layers without torch.checkpoint for attention modules.
-        no_checkpoint_ffn_blocks (list[int]): Layers without torch.checkpoint for feed-forward modules.
     """
 
     def __init__(
@@ -1472,16 +1306,12 @@ class VideoFormer(nn.Module):
         norm_layer=nn.LayerNorm,
         pa_frames=2,
         deformable_groups=16,
-        recal_all_flows=False,
         nonblind_denoising=False,
-        no_checkpoint_attn_blocks=[],
-        no_checkpoint_ffn_blocks=[],
     ):
         super().__init__()
         self.in_chans = in_chans
         self.upscale = upscale
         self.pa_frames = pa_frames
-        self.recal_all_flows = recal_all_flows
         self.nonblind_denoising = nonblind_denoising
 
         # conv_first
@@ -1497,8 +1327,6 @@ class VideoFormer(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         reshapes = ["none", "down", "down", "down", "up", "up", "up"]
         scales = [1, 2, 4, 8, 4, 2, 1]
-        use_checkpoint_attns = [False for i in range(len(depths))]
-        use_checkpoint_ffns = [False for i in range(len(depths))]
 
         # stage 1- 7
         for i in range(7):
@@ -1560,6 +1388,12 @@ class VideoFormer(nn.Module):
         if self.upscale == 1:
             # for video deblurring, etc.
             self.conv_last = nn.Conv3d(embed_dims[0], in_chans, kernel_size=(1, 3, 3), padding=(0, 1, 1))
+
+            # Add for torch.jit.script
+            self.conv_before_upsample = nn.Sequential(
+                nn.Conv3d(embed_dims[0], num_feat, kernel_size=(1, 3, 3), padding=(0, 1, 1)), nn.LeakyReLU(inplace=True)
+            )
+            self.upsample = Upsample(upscale, num_feat)
         else:
             # for video sr
             self.conv_before_upsample = nn.Sequential(
@@ -1587,7 +1421,7 @@ class VideoFormer(nn.Module):
 
         # warp input
         x_backward, x_forward = self.get_aligned_image_2frames(x, flows_backward[0], flows_forward[0])
-        x = torch.cat([x, x_backward, x_forward], 2)
+        x = torch.cat([x, x_backward, x_forward], dim=2)
 
         # concatenate noise level map
         if self.nonblind_denoising:
@@ -1634,7 +1468,9 @@ class VideoFormer(nn.Module):
         # len(flows_backward) -- 4, len(flows_forward) -- 4
         return flows_backward, flows_forward
 
-    def get_aligned_image_2frames(self, x, flows_backward, flows_forward) -> Tuple[torch.Tensor, torch.Tensor]:
+    # def get_aligned_image_2frames(self, x, flows_backward, flows_forward) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_aligned_image_2frames(self, x, flows_backward, flows_forward) -> List[torch.Tensor]:
+
         """Parallel feature warping for 2 frames."""
 
         # backward
