@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from distutils.version import LooseVersion
 from torch.nn.modules.utils import _pair, _single
+
 # import numpy as np
 from functools import reduce, lru_cache
 from operator import mul
@@ -213,7 +214,7 @@ class DropPath(nn.Module):
         return drop_path(x, self.drop_prob, self.training)
 
 
-def flow_warp(x, flow, interp_mode: str="bilinear", padding_mode: str="zeros"):
+def flow_warp(x, flow, interp_mode: str = "bilinear", padding_mode: str = "zeros"):
     """Warp an image or feature map with optical flow.
 
     Args:
@@ -231,7 +232,7 @@ def flow_warp(x, flow, interp_mode: str="bilinear", padding_mode: str="zeros"):
         Tensor: Warped image or feature map.
     """
 
-    align_corners:bool=True
+    align_corners: bool = True
 
     # assert x.size()[-2:] == flow.size()[1:3] # temporaily turned off for image-wise shift
     n, _, h, w = x.size()
@@ -366,7 +367,14 @@ class DCNv2PackFlowGuided(ModulatedDeformConvPack):
         mask = torch.sigmoid(mask)
 
         return torchvision.ops.deform_conv2d(
-            x, offset, self.weight, self.bias, (self.stride, self.stride), (self.padding, self.padding), (self.dilation, self.dilation), mask
+            x,
+            offset,
+            self.weight,
+            self.bias,
+            (self.stride, self.stride),
+            (self.padding, self.padding),
+            (self.dilation, self.dilation),
+            mask,
         )
 
 
@@ -400,22 +408,10 @@ class SpyNet(nn.Module):
         return_levels (list[int]): return flows of different levels. Default: [5].
     """
 
-    def __init__(self, load_path=None, return_levels=[5]):
+    def __init__(self, return_levels=[5]):
         super(SpyNet, self).__init__()
         self.return_levels = return_levels
         self.basic_module = nn.ModuleList([BasicModule() for _ in range(6)])
-        if load_path:
-            if not os.path.exists(load_path):
-                import requests
-
-                url = "https://github.com/JingyunLiang/VRT/releases/download/v0.0/spynet_sintel_final-3d2a1287.pth"
-                r = requests.get(url, allow_redirects=True)
-                print(f"downloading SpyNet pretrained model from {url}")
-                os.makedirs(os.path.dirname(load_path), exist_ok=True)
-                open(load_path, "wb").write(r.content)
-
-            self.load_state_dict(torch.load(load_path, map_location=lambda storage, loc: storage)["params"])
-
         self.register_buffer("mean", torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
         self.register_buffer("std", torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
@@ -472,7 +468,6 @@ class SpyNet(nn.Module):
         #         flow_out[:, 0, :, :] *= float(w // scale) / float(w_floor // scale)
         #         flow_out[:, 1, :, :] *= float(h // scale) / float(h_floor // scale)
         #         flow_list.insert(0, flow_out)
-
 
         for level, model in enumerate(self.basic_module):
             upsampled_flow = F.interpolate(input=flow, scale_factor=2.0, mode="bilinear", align_corners=True) * 2.0
@@ -532,7 +527,8 @@ class SpyNet(nn.Module):
         # return flow_list[0] if len(flow_list) == 1 else flow_list
         return flow_list
 
-def window_partition(x, window_size):
+
+def window_partition(x, window_size: Tuple[int]):
     """Partition the input into windows. Attention will be conducted within the windows.
 
     Args:
@@ -553,7 +549,11 @@ def window_partition(x, window_size):
         window_size[2],
         C,
     )
-    windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, reduce(mul, window_size), C)
+    # xxxx8888
+    # pdb.set_trace()
+    # windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, reduce(mul, window_size), C)
+    product_size = window_size[0] * window_size[1] * window_size[2]
+    windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, product_size, C)
 
     return windows
 
@@ -584,23 +584,19 @@ def window_reverse(windows, window_size, B, D, H, W):
 
     return x
 
-
 def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[List[int]]:
-    """Get the window size and the shift size"""
 
+    """Get the window size and the shift size"""
     use_window_size = list(window_size)
-    if shift_size is not None:
-        use_shift_size = list(shift_size)
+    use_shift_size = list(shift_size)
     for i in range(len(x_size)):
         if x_size[i] <= window_size[i]:
             use_window_size[i] = x_size[i]
-            if shift_size is not None:
-                use_shift_size[i] = 0
+            use_shift_size[i] = 0
+
     # xxxx8888
-    if shift_size is None:
-        return tuple(use_window_size)
-    else:
-        return tuple(use_window_size), tuple(use_shift_size)
+    # pdb.set_trace()
+    return tuple(use_window_size), tuple(use_shift_size)
 
 
 @lru_cache()
@@ -742,7 +738,7 @@ class WindowAttention(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
         trunc_normal_(self.relative_position_bias_table, std=0.02)
 
-    def forward(self, x, mask: Optional[torch.Tensor]=None):
+    def forward(self, x, mask: Optional[torch.Tensor] = None):
         """Forward function.
 
         Args:
@@ -777,7 +773,9 @@ class WindowAttention(nn.Module):
 
         return x
 
-    def attention(self, q, k, v, mask: Optional[torch.Tensor], x_shape: List[int], relative_position_encoding: bool=True):
+    def attention(
+        self, q, k, v, mask: Optional[torch.Tensor], x_shape: List[int], relative_position_encoding: bool = True
+    ):
         B_, N, C = x_shape
         attn = (q * self.scale) @ k.transpose(-2, -1)
 
@@ -890,6 +888,7 @@ class TMSA(nn.Module):
         self.num_heads = num_heads
         self.window_size = window_size
         self.shift_size = shift_size
+        self.shift_size_gt_zero =  any(i > 0 for i in shift_size)
 
         # num_heads = 6
         # window_size = (2, 8, 8)
@@ -932,7 +931,14 @@ class TMSA(nn.Module):
 
         _, Dp, Hp, Wp, _ = x.shape
         # cyclic shift
-        if any(i > 0 for i in shift_size):
+        # xxxx8888
+        # shift_size -- (3, 4, 4), (0, 0, 0) ...
+        # >>> any(i > 0 for i in (0,0,0)) -- False
+        # >>> any(i > 0 for i in (1,0,0)) -- True
+
+        # print("TMSA shift_size --- ", shift_size)
+        # if any(i > 0 for i in shift_size):
+        if self.shift_size_gt_zero:
             shifted_x = torch.roll(x, shifts=(-shift_size[0], -shift_size[1], -shift_size[2]), dims=(1, 2, 3))
             attn_mask = mask_matrix
         else:
@@ -950,7 +956,8 @@ class TMSA(nn.Module):
         shifted_x = window_reverse(attn_windows, window_size, B, Dp, Hp, Wp)  # B D' H' W' C
 
         # reverse cyclic shift
-        if any(i > 0 for i in shift_size):
+        # if any(i > 0 for i in shift_size):
+        if self.shift_size_gt_zero:
             x = torch.roll(shifted_x, shifts=(shift_size[0], shift_size[1], shift_size[2]), dims=(1, 2, 3))
         else:
             x = shifted_x
@@ -1226,7 +1233,6 @@ class Stage(nn.Module):
         )
         self.pa_fuse = Mlp_GEGLU(dim * (1 + 2), dim * (1 + 2), dim)
 
-
     def forward(self, x, flows_backward, flows_forward):
         x = self.reshape(x)
         x = self.linear1(self.residual_group1(x).transpose(1, 4)).transpose(1, 4) + x
@@ -1399,7 +1405,6 @@ class VideoFormer(nn.Module):
         qk_scale (float): Override default qk scale of head_dim ** -0.5 if set.
         drop_path_rate (float): Stochastic depth rate. Default: 0.2.
         norm_layer (obj): Normalization layer. Default: nn.LayerNorm.
-        spynet_path (str): Pretrained SpyNet model path.
         pa_frames (float): Number of warpped frames. Default: 2.
         deformable_groups (float): Number of deformable groups. Default: 16.
         recal_all_flows (bool): If True, derive (t,t+2) and (t,t+3) flows from (t,t+1). Default: False.
@@ -1424,7 +1429,6 @@ class VideoFormer(nn.Module):
         qk_scale=None,
         drop_path_rate=0.2,
         norm_layer=nn.LayerNorm,
-        spynet_path=None,
         pa_frames=2,
         deformable_groups=16,
         recal_all_flows=False,
@@ -1448,16 +1452,12 @@ class VideoFormer(nn.Module):
         )
 
         # main body
-        self.spynet = SpyNet(spynet_path, [2, 3, 4, 5])
+        self.spynet = SpyNet([2, 3, 4, 5])
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         reshapes = ["none", "down", "down", "down", "up", "up", "up"]
         scales = [1, 2, 4, 8, 4, 2, 1]
-        use_checkpoint_attns = [
-            False for i in range(len(depths))
-        ]
-        use_checkpoint_ffns = [
-            False for i in range(len(depths))
-        ]
+        use_checkpoint_attns = [False for i in range(len(depths))]
+        use_checkpoint_ffns = [False for i in range(len(depths))]
 
         # stage 1- 7
         for i in range(7):
@@ -1529,7 +1529,6 @@ class VideoFormer(nn.Module):
 
         self.NxCxDxHxW_NxDxHxWxC = Rearrange("n c d h w -> n d h w c")
         self.NxDxHxWxC_NxCxDxHxW = Rearrange("n d h w c -> n c d h w")
-        # self.NxCxDxHxW_NxDxHxWxC = Rearrange('n c d h w -> n d h w c')
 
     def forward(self, x):
         # x: (N, D, C, H, W)
@@ -1570,35 +1569,7 @@ class VideoFormer(nn.Module):
             _, _, C, H, W = x.shape
             return x + torch.nn.functional.interpolate(x_lq, size=(C, H, W), mode="trilinear", align_corners=False)
 
-    def get_flows(self, x)-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        """Get flows for 2 frames, 4 frames or 6 frames."""
-
-        # if self.pa_frames == 4:
-        #     flows_backward_2frames, flows_forward_2frames = self.get_flow_2frames(x)
-        #     flows_backward_4frames, flows_forward_4frames = self.get_flow_4frames(
-        #         flows_forward_2frames, flows_backward_2frames
-        #     )
-        #     flows_backward = flows_backward_2frames + flows_backward_4frames
-        #     flows_forward = flows_forward_2frames + flows_forward_4frames
-        # elif self.pa_frames == 6:
-        #     flows_backward_2frames, flows_forward_2frames = self.get_flow_2frames(x)
-        #     flows_backward_4frames, flows_forward_4frames = self.get_flow_4frames(
-        #         flows_forward_2frames, flows_backward_2frames
-        #     )
-        #     flows_backward_6frames, flows_forward_6frames = self.get_flow_6frames(
-        #         flows_forward_2frames, flows_backward_2frames, flows_forward_4frames, flows_backward_4frames
-        #     )
-        #     flows_backward = flows_backward_2frames + flows_backward_4frames + flows_backward_6frames
-        #     flows_forward = flows_forward_2frames + flows_forward_4frames + flows_forward_6frames
-        # else: # self.pa_frames == 2:
-        #     flows_backward, flows_forward = self.get_flow_2frames(x)
-        # self.pa_frames == 2
-
-        flows_backward, flows_forward = self.get_flow_2frames(x)
-
-        return flows_backward, flows_forward
-
-    def get_flow_2frames(self, x)-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    def get_flows(self, x) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Get flow between frames t and t+1 from x."""
 
         b, n, c, h, w = x.size()
@@ -1620,65 +1591,9 @@ class VideoFormer(nn.Module):
         # len(flows_backward) -- 4, len(flows_forward) -- 4
         return flows_backward, flows_forward
 
-    def get_flow_4frames(self, flows_forward: List[torch.Tensor], flows_backward: List[torch.Tensor])->Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        """Get flow between t and t+2 from (t,t+1) and (t+1,t+2)."""
-
-        # backward
-        d = flows_forward[0].shape[1]
-        flows_backward2 = []
-        for flows in flows_backward:
-            flow_list = []
-            for i in range(d - 1, 0, -1):
-                flow_n1 = flows[:, i - 1, :, :, :]  # flow from i+1 to i
-                flow_n2 = flows[:, i, :, :, :]  # flow from i+2 to i+1
-                flow_list.insert(0, flow_n1 + flow_warp(flow_n2, flow_n1.permute(0, 2, 3, 1)))  # flow from i+2 to i
-            flows_backward2.append(torch.stack(flow_list, 1))
-
-        # forward
-        flows_forward2 = []
-        for flows in flows_forward:
-            flow_list = []
-            for i in range(1, d):
-                flow_n1 = flows[:, i, :, :, :]  # flow from i-1 to i
-                flow_n2 = flows[:, i - 1, :, :, :]  # flow from i-2 to i-1
-                flow_list.append(flow_n1 + flow_warp(flow_n2, flow_n1.permute(0, 2, 3, 1)))  # flow from i-2 to i
-            flows_forward2.append(torch.stack(flow_list, 1))
-
-        # xxxx8888
-        pdb.set_trace()
-
-        return flows_backward2, flows_forward2
-
-    def get_flow_6frames(self, flows_forward: List[torch.Tensor], flows_backward: List[torch.Tensor], flows_forward2: List[torch.Tensor], flows_backward2: List[torch.Tensor])-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        """Get flow between t and t+3 from (t,t+2) and (t+2,t+3)."""
-
-        # backward
-        d = flows_forward2[0].shape[1]
-        flows_backward3 = []
-        for flows, flows2 in zip(flows_backward, flows_backward2):
-            flow_list = []
-            for i in range(d - 1, 0, -1):
-                flow_n1 = flows2[:, i - 1, :, :, :]  # flow from i+2 to i
-                flow_n2 = flows[:, i + 1, :, :, :]  # flow from i+3 to i+2
-                flow_list.insert(0, flow_n1 + flow_warp(flow_n2, flow_n1.permute(0, 2, 3, 1)))  # flow from i+3 to i
-            flows_backward3.append(torch.stack(flow_list, 1))
-
-        # forward
-        flows_forward3 = []
-        for flows, flows2 in zip(flows_forward, flows_forward2):
-            flow_list = []
-            for i in range(2, d + 1):
-                flow_n1 = flows2[:, i - 1, :, :, :]  # flow from i-2 to i
-                flow_n2 = flows[:, i - 2, :, :, :]  # flow from i-3 to i-2
-                flow_list.append(flow_n1 + flow_warp(flow_n2, flow_n1.permute(0, 2, 3, 1)))  # flow from i-3 to i
-            flows_forward3.append(torch.stack(flow_list, 1))
-
-        # xxxx8888
-        pdb.set_trace()
-
-        return flows_backward3, flows_forward3
-
-    def get_aligned_image_2frames(self, x, flows_backward, flows_forward)-> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    def get_aligned_image_2frames(
+        self, x, flows_backward, flows_forward
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Parallel feature warping for 2 frames."""
 
         # backward
@@ -1737,11 +1652,10 @@ if __name__ == "__main__":
         indep_reconsts=[11, 12],
         embed_dims=[120, 120, 120, 120, 120, 120, 120, 180, 180, 180, 180, 180, 180],
         num_heads=[6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6],
-        spynet_path=None,
         pa_frames=2,
         deformable_groups=12,
     ).to(device)
-    print(model)
+    # print(model)
     print("{:>16s} : {:<.4f} [M]".format("#Params", sum(map(lambda x: x.numel(), model.parameters())) / 10 ** 6))
 
     # torch.Size([1, 40, 3, 128, 128])
@@ -1751,7 +1665,6 @@ if __name__ == "__main__":
     # with torch.no_grad():
     #     x = model(x)
     # print(x.shape)
-
 
     model = torch.jit.script(model)
     print(model.code)
