@@ -549,8 +549,6 @@ def window_partition(x, window_size: List[int]):
         window_size[2],
         C,
     )
-    # xxxx8888
-    # pdb.set_trace()
     # windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, reduce(mul, window_size), C)
     product_size = window_size[0] * window_size[1] * window_size[2]
     windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, product_size, C)
@@ -584,6 +582,7 @@ def window_reverse(windows, window_size: List[int], B: int, D: int, H: int, W: i
 
     return x
 
+
 # def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[List[int]]:
 
 #     """Get the window size and the shift size"""
@@ -608,6 +607,7 @@ def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[
             use_window_size[i] = x_size[i]
 
     return use_window_size
+
 
 def get_shift_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[int]:
 
@@ -642,14 +642,14 @@ def compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: Lis
     #             img_mask[:, d, h, w, :] = cnt
     #             cnt += 1
 
-    d1_range = [0, D-window_size[0], D-shift_size[0]]
-    d2_range = [D - window_size[0], D-shift_size[0], D]
+    d1_range = [0, D - window_size[0], D - shift_size[0]]
+    d2_range = [D - window_size[0], D - shift_size[0], D]
 
-    h1_range = [0, H-window_size[1], H-shift_size[1]]
-    h2_range = [H - window_size[1], H-shift_size[1], H]
+    h1_range = [0, H - window_size[1], H - shift_size[1]]
+    h2_range = [H - window_size[1], H - shift_size[1], H]
 
-    w1_range = [0, W-window_size[2], W-shift_size[2]]
-    w2_range = [W - window_size[2], W-shift_size[2], W]
+    w1_range = [0, W - window_size[2], W - shift_size[2]]
+    w2_range = [W - window_size[2], W - shift_size[2], W]
 
     for d1, d2 in zip(d1_range, d2_range):
         for h1, h2 in zip(h1_range, h2_range):
@@ -764,23 +764,22 @@ class WindowAttention(nn.Module):
         )  # 2*Wd-1 * 2*Wh-1 * 2*Ww-1, nH
         self.register_buffer("relative_position_index", self.get_position_index(window_size))
         self.qkv_self = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.proj = nn.Linear(dim, dim)
 
         # mutual attention with sine position encoding
-        # xxxx8888
+        # if self.mut_attn:
+        #     self.register_buffer(
+        #         "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
+        #     )
+        #     self.qkv_mut = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        #     self.proj = nn.Linear(2 * dim, dim)
+        self.register_buffer(
+            "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
+        )
+        self.qkv_mut = nn.Linear(dim, dim * 3, bias=qkv_bias)
         if self.mut_attn:
-            self.register_buffer(
-                "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
-            )
-            self.qkv_mut = nn.Linear(dim, dim * 3, bias=qkv_bias)
             self.proj = nn.Linear(2 * dim, dim)
-        # else:
-        #     # For torch.jit.script
-        #     # self.register_buffer(
-        #     #     "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
-        #     # )
-        #     self.qkv_mut = nn.Identity()
-        #     self.proj = nn.Identity()
+        else:
+            self.proj = nn.Linear(dim, dim)
 
         self.softmax = nn.Softmax(dim=-1)
         trunc_normal_(self.relative_position_bias_table, std=0.02)
@@ -935,7 +934,7 @@ class TMSA(nn.Module):
         self.num_heads = num_heads
         self.window_size = window_size
         self.shift_size = shift_size
-        self.shift_size_gt_zero =  any(i > 0 for i in shift_size)
+        self.shift_size_gt_zero = any(i > 0 for i in shift_size)
 
         assert 0 <= self.shift_size[0] < self.window_size[0], "shift_size must in 0-window_size"
         assert 0 <= self.shift_size[1] < self.window_size[1], "shift_size must in 0-window_size"
@@ -1274,20 +1273,21 @@ class Stage(nn.Module):
         )
         self.pa_fuse = Mlp_GEGLU(dim * (1 + 2), dim * (1 + 2), dim)
 
-    def forward(self, x, flows_backward, flows_forward):
+    def forward(self, x, flows_backward: List[torch.Tensor], flows_forward: List[torch.Tensor]):
         x = self.reshape(x)
         x = self.linear1(self.residual_group1(x).transpose(1, 4)).transpose(1, 4) + x
         x = self.linear2(self.residual_group2(x).transpose(1, 4)).transpose(1, 4) + x
         x = x.transpose(1, 2)
         # 'get_aligned_feature_2frames'
-        x_backward, x_forward = getattr(self, f"get_aligned_feature_{self.pa_frames}frames")(
-            x, flows_backward, flows_forward
-        )
-        x = self.pa_fuse(torch.cat([x, x_backward, x_forward], 2).permute(0, 1, 3, 4, 2)).permute(0, 4, 1, 2, 3)
+        # x_backward, x_forward = getattr(self, f"get_aligned_feature_{self.pa_frames}frames")(
+        x_backward, x_forward = self.get_aligned_feature_2frames(x, flows_backward, flows_forward)
+        x = self.pa_fuse(torch.cat([x, x_backward, x_forward], dim=2).permute(0, 1, 3, 4, 2)).permute(0, 4, 1, 2, 3)
 
         return x
 
-    def get_aligned_feature_2frames(self, x, flows_backward, flows_forward):
+    def get_aligned_feature_2frames(
+        self, x, flows_backward: List[torch.Tensor], flows_forward: List[torch.Tensor]
+    ) -> List[torch.Tensor]:
         """Parallel feature warping for 2 frames."""
 
         # backward
@@ -1307,7 +1307,7 @@ class Stage(nn.Module):
             x_i_warped = flow_warp(x_i, flow.permute(0, 2, 3, 1), "bilinear")  # frame i-1 aligned towards i
             x_forward.append(self.pa_deform(x_i, [x_i_warped], x[:, i + 1, ...], [flow]))
 
-        return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
+        return torch.stack(x_backward, dim=1), torch.stack(x_forward, dim=1)
 
     # def get_aligned_feature_4frames(self, x, flows_backward, flows_forward):
     #     """Parallel feature warping for 4 frames."""
@@ -1577,6 +1577,8 @@ class VideoFormer(nn.Module):
         # obtain noise level map
         if self.nonblind_denoising:
             x, noise_level_map = x[:, :, : self.in_chans, :, :], x[:, :, self.in_chans :, :, :]
+        else:
+            noise_level_map = x[:, :, self.in_chans :, :, :]  # Fake for torch.jit.script
 
         x_lq = x.clone()
 
@@ -1589,7 +1591,7 @@ class VideoFormer(nn.Module):
 
         # concatenate noise level map
         if self.nonblind_denoising:
-            x = torch.cat([x, noise_level_map], 2)
+            x = torch.cat([x, noise_level_map], dim=2)
 
         # main network
         if self.upscale == 1:
@@ -1632,9 +1634,7 @@ class VideoFormer(nn.Module):
         # len(flows_backward) -- 4, len(flows_forward) -- 4
         return flows_backward, flows_forward
 
-    def get_aligned_image_2frames(
-        self, x, flows_backward, flows_forward
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    def get_aligned_image_2frames(self, x, flows_backward, flows_forward) -> Tuple[torch.Tensor, torch.Tensor]:
         """Parallel feature warping for 2 frames."""
 
         # backward
@@ -1652,9 +1652,9 @@ class VideoFormer(nn.Module):
             flow = flows_forward[:, i, ...]
             x_forward.append(flow_warp(x_i, flow.permute(0, 2, 3, 1), "nearest4"))  # frame i-1 aligned towards i
 
-        return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
+        return torch.stack(x_backward, dim=1), torch.stack(x_forward, dim=1)
 
-    def forward_features(self, x, flows_backward, flows_forward):
+    def forward_features(self, x, flows_backward: List[torch.Tensor], flows_forward: List[torch.Tensor]):
         """Main network for feature extraction."""
 
         x1 = self.stage1(x, flows_backward[0::4], flows_forward[0::4])

@@ -23,6 +23,27 @@ from tqdm import tqdm
 import pdb
 
 
+def model_load(model, path):
+    """Load model."""
+
+    if not os.path.exists(path):
+        raise IOError(f"Model checkpoint '{path}' doesn't exist.")
+
+    # state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+    state_dict = torch.load(path, map_location=torch.device("cpu"))
+    if "params" in state_dict.keys():
+        state_dict = state_dict["params"]
+
+    target_state_dict = model.state_dict()
+
+    for n, p in state_dict.items():
+        if n in target_state_dict.keys():
+            target_state_dict[n].copy_(p)
+        else:
+            # print(n)
+            raise KeyError(n)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", type=str, default="001_VRT_videosr_bi_REDS_6frames", help="tasks: 001 to 008")
@@ -308,8 +329,11 @@ def prepare_model_dataset(args):
         print(f"downloading model {model_path}")
         open(model_path, "wb").write(r.content)
 
-    pretrained_model = torch.load(model_path)
-    model.load_state_dict(pretrained_model["params"] if "params" in pretrained_model.keys() else pretrained_model)
+    # pretrained_model = torch.load(model_path)
+    # # "params" in pretrained_model.keys() -- True
+    # model.load_state_dict(pretrained_model["params"] if "params" in pretrained_model.keys() else pretrained_model)
+
+    model_load(model, model_path)
 
     # download datasets
     if os.path.exists(f"{args.folder_lq}"):
