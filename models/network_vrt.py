@@ -528,7 +528,7 @@ class SpyNet(nn.Module):
         return flow_list
 
 
-def window_partition(x, window_size: Tuple[int]):
+def window_partition(x, window_size: List[int]):
     """Partition the input into windows. Attention will be conducted within the windows.
 
     Args:
@@ -558,7 +558,7 @@ def window_partition(x, window_size: Tuple[int]):
     return windows
 
 
-def window_reverse(windows, window_size, B, D, H, W):
+def window_reverse(windows, window_size: List[int], B: int, D: int, H: int, W: int):
     """Reverse windows back to the original input. Attention was conducted within the windows.
 
     Args:
@@ -584,33 +584,79 @@ def window_reverse(windows, window_size, B, D, H, W):
 
     return x
 
-def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[List[int]]:
+# def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[List[int]]:
+
+#     """Get the window size and the shift size"""
+#     use_window_size = list(window_size)
+#     use_shift_size = list(shift_size)
+#     for i in range(len(x_size)):
+#         if x_size[i] <= window_size[i]:
+#             use_window_size[i] = x_size[i]
+#             use_shift_size[i] = 0
+
+#     # xxxx8888
+#     # pdb.set_trace()
+#     return tuple(use_window_size), tuple(use_shift_size)
+
+
+def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[int]:
 
     """Get the window size and the shift size"""
-    use_window_size = list(window_size)
-    use_shift_size = list(shift_size)
+    use_window_size = window_size
     for i in range(len(x_size)):
         if x_size[i] <= window_size[i]:
             use_window_size[i] = x_size[i]
+
+    return use_window_size
+
+def get_shift_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[int]:
+
+    """Get the window size and the shift size"""
+    use_shift_size = shift_size
+    for i in range(len(x_size)):
+        if x_size[i] <= window_size[i]:
             use_shift_size[i] = 0
 
-    # xxxx8888
-    # pdb.set_trace()
-    return tuple(use_window_size), tuple(use_shift_size)
+    return use_shift_size
 
 
-@lru_cache()
+# xxxx9999
+# @lru_cache()
 # def compute_mask(D, H, W, window_size, shift_size, device):
+# @lru_cache()
 def compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: List[int]):
     """Compute attnetion mask for input of size (D, H, W). @lru_cache caches each stage results."""
 
     img_mask = torch.zeros((1, D, H, W, 1))  # 1 Dp Hp Wp 1
     cnt = 0
-    for d in slice(-window_size[0]), slice(-window_size[0], -shift_size[0]), slice(-shift_size[0], None):
-        for h in slice(-window_size[1]), slice(-window_size[1], -shift_size[1]), slice(-shift_size[1], None):
-            for w in slice(-window_size[2]), slice(-window_size[2], -shift_size[2]), slice(-shift_size[2], None):
-                img_mask[:, d, h, w, :] = cnt
+    # D, H, W -- (12, 128, 128)
+    # window_size -- [2, 8, 8]
+    # shift_size -- [1, 4, 4]
+
+    # for d in slice(-window_size[0]), slice(-window_size[0], -shift_size[0]), slice(-shift_size[0], None):
+    #     # slice(None, -2, None), slice(-2, -1, None), slice(-1, None, None)
+    #     for h in slice(-window_size[1]), slice(-window_size[1], -shift_size[1]), slice(-shift_size[1], None):
+    #         # slice(None, -8, None), slice(-8, -4, None), slice(-4, None, None)
+    #         for w in slice(-window_size[2]), slice(-window_size[2], -shift_size[2]), slice(-shift_size[2], None):
+    #             # slice(None, -8, None), slice(-8, -4, None), slice(-4, None, None)
+    #             img_mask[:, d, h, w, :] = cnt
+    #             cnt += 1
+
+    d1_range = [0, D-window_size[0], D-shift_size[0]]
+    d2_range = [D - window_size[0], D-shift_size[0], D]
+
+    h1_range = [0, H-window_size[1], H-shift_size[1]]
+    h2_range = [H - window_size[1], H-shift_size[1], H]
+
+    w1_range = [0, W-window_size[2], W-shift_size[2]]
+    w2_range = [W - window_size[2], W-shift_size[2], W]
+
+    for d1, d2 in zip(d1_range, d2_range):
+        for h1, h2 in zip(h1_range, h2_range):
+            for w1, w2 in zip(w1_range, w2_range):
+                img_mask[:, d1:d2, h1:h2, w1:w2, :] = cnt
                 cnt += 1
+
     mask_windows = window_partition(img_mask, window_size)  # nW, ws[0]*ws[1]*ws[2], 1
     mask_windows = mask_windows.squeeze(-1)  # nW, ws[0]*ws[1]*ws[2]
     attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
@@ -728,12 +774,13 @@ class WindowAttention(nn.Module):
             )
             self.qkv_mut = nn.Linear(dim, dim * 3, bias=qkv_bias)
             self.proj = nn.Linear(2 * dim, dim)
-
-        # self.register_buffer(
-        #     "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
-        # )
-        # self.qkv_mut = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        # self.proj = nn.Linear(2 * dim, dim)
+        # else:
+        #     # For torch.jit.script
+        #     # self.register_buffer(
+        #     #     "position_bias", self.get_sine_position_encoding(window_size[1:], dim // 2, normalize=True)
+        #     # )
+        #     self.qkv_mut = nn.Identity()
+        #     self.proj = nn.Identity()
 
         self.softmax = nn.Softmax(dim=-1)
         trunc_normal_(self.relative_position_bias_table, std=0.02)
@@ -872,8 +919,8 @@ class TMSA(nn.Module):
         dim,
         input_resolution,
         num_heads,
-        window_size=(6, 8, 8),
-        shift_size=(0, 0, 0),
+        window_size=[6, 8, 8],
+        shift_size=[0, 0, 0],
         mut_attn=True,
         mlp_ratio=2.0,
         qkv_bias=True,
@@ -889,15 +936,6 @@ class TMSA(nn.Module):
         self.window_size = window_size
         self.shift_size = shift_size
         self.shift_size_gt_zero =  any(i > 0 for i in shift_size)
-
-        # num_heads = 6
-        # window_size = (2, 8, 8)
-        # shift_size = [0, 0, 0]
-        # mut_attn = True
-        # mlp_ratio = 2.0
-        # qkv_bias = True
-        # qk_scale = None
-        # drop_path = 0.0
 
         assert 0 <= self.shift_size[0] < self.window_size[0], "shift_size must in 0-window_size"
         assert 0 <= self.shift_size[1] < self.window_size[1], "shift_size must in 0-window_size"
@@ -918,7 +956,8 @@ class TMSA(nn.Module):
 
     def forward_part1(self, x, mask_matrix):
         B, D, H, W, C = x.shape
-        window_size, shift_size = get_window_size((D, H, W), self.window_size, self.shift_size)
+        window_size = get_window_size([D, H, W], self.window_size, self.shift_size)
+        shift_size = get_shift_size([D, H, W], self.window_size, self.shift_size)
 
         x = self.norm1(x)
 
@@ -936,7 +975,6 @@ class TMSA(nn.Module):
         # >>> any(i > 0 for i in (0,0,0)) -- False
         # >>> any(i > 0 for i in (1,0,0)) -- True
 
-        # print("TMSA shift_size --- ", shift_size)
         # if any(i > 0 for i in shift_size):
         if self.shift_size_gt_zero:
             shifted_x = torch.roll(x, shifts=(-shift_size[0], -shift_size[1], -shift_size[2]), dims=(1, 2, 3))
@@ -952,7 +990,8 @@ class TMSA(nn.Module):
         attn_windows = self.attn(x_windows, mask=attn_mask)  # B*nW, Wd*Wh*Ww, C
 
         # merge windows
-        attn_windows = attn_windows.view(-1, *(window_size + (C,)))
+        window_size_c = [-1, window_size[0], window_size[1], window_size[2], C]
+        attn_windows = attn_windows.view(window_size_c)
         shifted_x = window_reverse(attn_windows, window_size, B, Dp, Hp, Wp)  # B D' H' W' C
 
         # reverse cyclic shift
@@ -1055,7 +1094,9 @@ class TMSAG(nn.Module):
         """
         # calculate attention mask for attention
         B, C, D, H, W = x.shape
-        window_size, shift_size = get_window_size((D, H, W), self.window_size, self.shift_size)
+        window_size = get_window_size([D, H, W], self.window_size, self.shift_size)
+        shift_size = get_shift_size([D, H, W], self.window_size, self.shift_size)
+
         # x = rearrange(x, 'b c d h w -> b d h w c')
         x = self.BxCxDxHxW_BxDxHxWxC(x)
         Dp = int(math.ceil(D / window_size[0])) * window_size[0]
@@ -1195,7 +1236,7 @@ class Stage(nn.Module):
             input_resolution=input_resolution,
             depth=int(depth * mul_attn_ratio),
             num_heads=num_heads,
-            window_size=(2, window_size[1], window_size[2]),
+            window_size=[2, window_size[1], window_size[2]],
             mut_attn=True,
             mlp_ratio=mlp_ratio,
             qkv_bias=qkv_bias,
@@ -1268,121 +1309,121 @@ class Stage(nn.Module):
 
         return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
 
-    def get_aligned_feature_4frames(self, x, flows_backward, flows_forward):
-        """Parallel feature warping for 4 frames."""
+    # def get_aligned_feature_4frames(self, x, flows_backward, flows_forward):
+    #     """Parallel feature warping for 4 frames."""
 
-        # backward
-        n = x.size(1)
-        x_backward = [torch.zeros_like(x[:, -1, ...])]
-        for i in range(n, 1, -1):
-            x_i = x[:, i - 1, ...]
-            flow1 = flows_backward[0][:, i - 2, ...]
-            if i == n:
-                x_ii = torch.zeros_like(x[:, n - 2, ...])
-                flow2 = torch.zeros_like(flows_backward[1][:, n - 3, ...])
-            else:
-                x_ii = x[:, i, ...]
-                flow2 = flows_backward[1][:, i - 2, ...]
+    #     # backward
+    #     n = x.size(1)
+    #     x_backward = [torch.zeros_like(x[:, -1, ...])]
+    #     for i in range(n, 1, -1):
+    #         x_i = x[:, i - 1, ...]
+    #         flow1 = flows_backward[0][:, i - 2, ...]
+    #         if i == n:
+    #             x_ii = torch.zeros_like(x[:, n - 2, ...])
+    #             flow2 = torch.zeros_like(flows_backward[1][:, n - 3, ...])
+    #         else:
+    #             x_ii = x[:, i, ...]
+    #             flow2 = flows_backward[1][:, i - 2, ...]
 
-            x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i+1 aligned towards i
-            x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i+2 aligned towards i
-            x_backward.insert(
-                0,
-                self.pa_deform(torch.cat([x_i, x_ii], 1), [x_i_warped, x_ii_warped], x[:, i - 2, ...], [flow1, flow2]),
-            )
+    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i+1 aligned towards i
+    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i+2 aligned towards i
+    #         x_backward.insert(
+    #             0,
+    #             self.pa_deform(torch.cat([x_i, x_ii], 1), [x_i_warped, x_ii_warped], x[:, i - 2, ...], [flow1, flow2]),
+    #         )
 
-        # forward
-        x_forward = [torch.zeros_like(x[:, 0, ...])]
-        for i in range(-1, n - 2):
-            x_i = x[:, i + 1, ...]
-            flow1 = flows_forward[0][:, i + 1, ...]
-            if i == -1:
-                x_ii = torch.zeros_like(x[:, 1, ...])
-                flow2 = torch.zeros_like(flows_forward[1][:, 0, ...])
-            else:
-                x_ii = x[:, i, ...]
-                flow2 = flows_forward[1][:, i, ...]
+    #     # forward
+    #     x_forward = [torch.zeros_like(x[:, 0, ...])]
+    #     for i in range(-1, n - 2):
+    #         x_i = x[:, i + 1, ...]
+    #         flow1 = flows_forward[0][:, i + 1, ...]
+    #         if i == -1:
+    #             x_ii = torch.zeros_like(x[:, 1, ...])
+    #             flow2 = torch.zeros_like(flows_forward[1][:, 0, ...])
+    #         else:
+    #             x_ii = x[:, i, ...]
+    #             flow2 = flows_forward[1][:, i, ...]
 
-            x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i-1 aligned towards i
-            x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i-2 aligned towards i
-            x_forward.append(
-                self.pa_deform(torch.cat([x_i, x_ii], 1), [x_i_warped, x_ii_warped], x[:, i + 2, ...], [flow1, flow2])
-            )
+    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i-1 aligned towards i
+    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i-2 aligned towards i
+    #         x_forward.append(
+    #             self.pa_deform(torch.cat([x_i, x_ii], 1), [x_i_warped, x_ii_warped], x[:, i + 2, ...], [flow1, flow2])
+    #         )
 
-        return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
+    #     return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
 
-    def get_aligned_feature_6frames(self, x, flows_backward, flows_forward):
-        """Parallel feature warping for 6 frames."""
+    # def get_aligned_feature_6frames(self, x, flows_backward, flows_forward):
+    #     """Parallel feature warping for 6 frames."""
 
-        # backward
-        n = x.size(1)
-        x_backward = [torch.zeros_like(x[:, -1, ...])]
-        for i in range(n + 1, 2, -1):
-            x_i = x[:, i - 2, ...]
-            flow1 = flows_backward[0][:, i - 3, ...]
-            if i == n + 1:
-                x_ii = torch.zeros_like(x[:, -1, ...])
-                flow2 = torch.zeros_like(flows_backward[1][:, -1, ...])
-                x_iii = torch.zeros_like(x[:, -1, ...])
-                flow3 = torch.zeros_like(flows_backward[2][:, -1, ...])
-            elif i == n:
-                x_ii = x[:, i - 1, ...]
-                flow2 = flows_backward[1][:, i - 3, ...]
-                x_iii = torch.zeros_like(x[:, -1, ...])
-                flow3 = torch.zeros_like(flows_backward[2][:, -1, ...])
-            else:
-                x_ii = x[:, i - 1, ...]
-                flow2 = flows_backward[1][:, i - 3, ...]
-                x_iii = x[:, i, ...]
-                flow3 = flows_backward[2][:, i - 3, ...]
+    #     # backward
+    #     n = x.size(1)
+    #     x_backward = [torch.zeros_like(x[:, -1, ...])]
+    #     for i in range(n + 1, 2, -1):
+    #         x_i = x[:, i - 2, ...]
+    #         flow1 = flows_backward[0][:, i - 3, ...]
+    #         if i == n + 1:
+    #             x_ii = torch.zeros_like(x[:, -1, ...])
+    #             flow2 = torch.zeros_like(flows_backward[1][:, -1, ...])
+    #             x_iii = torch.zeros_like(x[:, -1, ...])
+    #             flow3 = torch.zeros_like(flows_backward[2][:, -1, ...])
+    #         elif i == n:
+    #             x_ii = x[:, i - 1, ...]
+    #             flow2 = flows_backward[1][:, i - 3, ...]
+    #             x_iii = torch.zeros_like(x[:, -1, ...])
+    #             flow3 = torch.zeros_like(flows_backward[2][:, -1, ...])
+    #         else:
+    #             x_ii = x[:, i - 1, ...]
+    #             flow2 = flows_backward[1][:, i - 3, ...]
+    #             x_iii = x[:, i, ...]
+    #             flow3 = flows_backward[2][:, i - 3, ...]
 
-            x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i+1 aligned towards i
-            x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i+2 aligned towards i
-            x_iii_warped = flow_warp(x_iii, flow3.permute(0, 2, 3, 1), "bilinear")  # frame i+3 aligned towards i
-            x_backward.insert(
-                0,
-                self.pa_deform(
-                    torch.cat([x_i, x_ii, x_iii], 1),
-                    [x_i_warped, x_ii_warped, x_iii_warped],
-                    x[:, i - 3, ...],
-                    [flow1, flow2, flow3],
-                ),
-            )
+    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i+1 aligned towards i
+    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i+2 aligned towards i
+    #         x_iii_warped = flow_warp(x_iii, flow3.permute(0, 2, 3, 1), "bilinear")  # frame i+3 aligned towards i
+    #         x_backward.insert(
+    #             0,
+    #             self.pa_deform(
+    #                 torch.cat([x_i, x_ii, x_iii], 1),
+    #                 [x_i_warped, x_ii_warped, x_iii_warped],
+    #                 x[:, i - 3, ...],
+    #                 [flow1, flow2, flow3],
+    #             ),
+    #         )
 
-        # forward
-        x_forward = [torch.zeros_like(x[:, 0, ...])]
-        for i in range(0, n - 1):
-            x_i = x[:, i, ...]
-            flow1 = flows_forward[0][:, i, ...]
-            if i == 0:
-                x_ii = torch.zeros_like(x[:, 0, ...])
-                flow2 = torch.zeros_like(flows_forward[1][:, 0, ...])
-                x_iii = torch.zeros_like(x[:, 0, ...])
-                flow3 = torch.zeros_like(flows_forward[2][:, 0, ...])
-            elif i == 1:
-                x_ii = x[:, i - 1, ...]
-                flow2 = flows_forward[1][:, i - 1, ...]
-                x_iii = torch.zeros_like(x[:, 0, ...])
-                flow3 = torch.zeros_like(flows_forward[2][:, 0, ...])
-            else:
-                x_ii = x[:, i - 1, ...]
-                flow2 = flows_forward[1][:, i - 1, ...]
-                x_iii = x[:, i - 2, ...]
-                flow3 = flows_forward[2][:, i - 2, ...]
+    #     # forward
+    #     x_forward = [torch.zeros_like(x[:, 0, ...])]
+    #     for i in range(0, n - 1):
+    #         x_i = x[:, i, ...]
+    #         flow1 = flows_forward[0][:, i, ...]
+    #         if i == 0:
+    #             x_ii = torch.zeros_like(x[:, 0, ...])
+    #             flow2 = torch.zeros_like(flows_forward[1][:, 0, ...])
+    #             x_iii = torch.zeros_like(x[:, 0, ...])
+    #             flow3 = torch.zeros_like(flows_forward[2][:, 0, ...])
+    #         elif i == 1:
+    #             x_ii = x[:, i - 1, ...]
+    #             flow2 = flows_forward[1][:, i - 1, ...]
+    #             x_iii = torch.zeros_like(x[:, 0, ...])
+    #             flow3 = torch.zeros_like(flows_forward[2][:, 0, ...])
+    #         else:
+    #             x_ii = x[:, i - 1, ...]
+    #             flow2 = flows_forward[1][:, i - 1, ...]
+    #             x_iii = x[:, i - 2, ...]
+    #             flow3 = flows_forward[2][:, i - 2, ...]
 
-            x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i-1 aligned towards i
-            x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i-2 aligned towards i
-            x_iii_warped = flow_warp(x_iii, flow3.permute(0, 2, 3, 1), "bilinear")  # frame i-3 aligned towards i
-            x_forward.append(
-                self.pa_deform(
-                    torch.cat([x_i, x_ii, x_iii], 1),
-                    [x_i_warped, x_ii_warped, x_iii_warped],
-                    x[:, i + 1, ...],
-                    [flow1, flow2, flow3],
-                )
-            )
+    #         x_i_warped = flow_warp(x_i, flow1.permute(0, 2, 3, 1), "bilinear")  # frame i-1 aligned towards i
+    #         x_ii_warped = flow_warp(x_ii, flow2.permute(0, 2, 3, 1), "bilinear")  # frame i-2 aligned towards i
+    #         x_iii_warped = flow_warp(x_iii, flow3.permute(0, 2, 3, 1), "bilinear")  # frame i-3 aligned towards i
+    #         x_forward.append(
+    #             self.pa_deform(
+    #                 torch.cat([x_i, x_ii, x_iii], 1),
+    #                 [x_i_warped, x_ii_warped, x_iii_warped],
+    #                 x[:, i + 1, ...],
+    #                 [flow1, flow2, flow3],
+    #             )
+    #         )
 
-        return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
+    #     return [torch.stack(x_backward, 1), torch.stack(x_forward, 1)]
 
 
 class VideoFormer(nn.Module):
