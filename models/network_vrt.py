@@ -11,12 +11,13 @@ import torchvision
 import torch.nn.functional as F
 from distutils.version import LooseVersion
 
-# from functools import reduce, lru_cache
+from functools import reduce, lru_cache
 
 from einops.layers.torch import Rearrange
 from typing import List
 from typing import Tuple
 from typing import Optional
+from typing import Dict
 
 import pdb
 
@@ -575,13 +576,26 @@ def get_shift_size(x_size: List[int], window_size: List[int], shift_size: List[i
     return use_shift_size
 
 
-# xxxx9999
-# @lru_cache()
-# def compute_mask(D, H, W, window_size, shift_size, device):
-# @lru_cache()
+image_mask_cache: Dict[str, torch.Tensor] = {}
+image_mask_cache_max_size: int = 16
+
+def fast_compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: List[int]):
+    global image_mask_cache
+    global image_mask_cache_max_size
+
+    key = f"{D}-{H}-{W}-{window_size}-{shift_size}"
+    if key in image_mask_cache.keys():
+        mask = image_mask_cache[key]
+    else:
+        if len(image_mask_cache) > image_mask_cache_max_size:
+            image_mask_cache = {}
+        mask = compute_mask(D, H, W, window_size, shift_size)
+        image_mask_cache[key] = mask
+    return mask
+
+
 def compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: List[int]):
     """Compute attnetion mask for input of size (D, H, W). @lru_cache caches each stage results."""
-
     img_mask = torch.zeros((1, D, H, W, 1))  # 1 Dp Hp Wp 1
     cnt = 0
     # D, H, W -- (12, 128, 128)
@@ -1055,7 +1069,7 @@ class TMSAG(nn.Module):
         Dp = int(math.ceil(D / window_size[0])) * window_size[0]
         Hp = int(math.ceil(H / window_size[1])) * window_size[1]
         Wp = int(math.ceil(W / window_size[2])) * window_size[2]
-        attn_mask = compute_mask(Dp, Hp, Wp, window_size, shift_size).to(x.device)
+        attn_mask = fast_compute_mask(Dp, Hp, Wp, window_size, shift_size).to(x.device)
 
         for blk in self.blocks:
             x = blk(x, attn_mask)
