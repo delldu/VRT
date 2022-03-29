@@ -5,4 +5,3 @@ python main_test_vrt.py \
 	--tile 12 128 128 \
 	--tile_overlap 2 20 20
 
-

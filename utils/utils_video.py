@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from os import path as osp
 from torch.nn import functional as F
-
+import pdb
 
 def scandir(dir_path, suffix=None, recursive=False, full_path=False):
     """Scan a directory to find the interested files.
@@ -74,12 +74,12 @@ def read_img_seq(path, require_mod_crop=False, scale=1, return_imgname=False):
         img_paths = sorted(list(scandir(path, full_path=True)))
     imgs = [cv2.imread(v).astype(np.float32) / 255.0 for v in img_paths]
 
-    if require_mod_crop:
+    if require_mod_crop: # False
         imgs = [mod_crop(img, scale) for img in imgs]
     imgs = img2tensor(imgs, bgr2rgb=True, float32=True)
     imgs = torch.stack(imgs, dim=0)
 
-    if return_imgname:
+    if return_imgname: # False
         imgnames = [osp.splitext(osp.basename(path))[0] for path in img_paths]
         return imgs, imgnames
     else:
@@ -98,18 +98,22 @@ def img2tensor(imgs, bgr2rgb=True, float32=True):
         list[tensor] | tensor: Tensor images. If returned results only have
             one element, just return tensor.
     """
+    # bgr2rgb -- True
 
     def _totensor(img, bgr2rgb, float32):
+        # image.shape -- (720, 1280, 3)
         if img.shape[2] == 3 and bgr2rgb:
             if img.dtype == "float64":
                 img = img.astype("float32")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = torch.from_numpy(img.transpose(2, 0, 1))
+        img = torch.from_numpy(img.transpose(2, 0, 1)) # HxWxC->CxHxW
         if float32:
             img = img.float()
+        # img.min(), img.max() -- 0.0, 1.0
         return img
 
-    if isinstance(imgs, list):
+    # len(imgs) -- 100
+    if isinstance(imgs, list): #   True
         return [_totensor(img, bgr2rgb, float32) for img in imgs]
     else:
         return _totensor(imgs, bgr2rgb, float32)

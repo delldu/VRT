@@ -81,6 +81,7 @@ def main():
             }
         )
     elif args.folder_gt is not None:
+        # pdb.set_trace()
         test_set = VideoRecurrentTestDataset(
             {
                 "dataroot_gt": args.folder_gt,
@@ -91,6 +92,7 @@ def main():
             }
         )
     else:
+        pdb.set_trace()
         test_set = SingleVideoRecurrentTestDataset(
             {
                 "dataroot_gt": args.folder_gt,
@@ -362,31 +364,41 @@ def test_video(lq, model, args):
     num_frame_testing = args.tile[0]
     if num_frame_testing:
         # test as multiple clips if out-of-memory
-        sf = args.scale
+        sf = args.scale # SR -- 4, others 1
+        # pp args.tile_overlap -- [2, 20, 20]
         num_frame_overlapping = args.tile_overlap[0]
-        not_overlap_border = False
-        b, d, c, h, w = lq.size()
+        # not_overlap_border = False
+        b, d, c, h, w = lq.size() # (1, 100, 3, 180, 320)
+
         c = c - 1 if args.nonblind_denoising else c
-        stride = num_frame_testing - num_frame_overlapping
+        stride = num_frame_testing - num_frame_overlapping # 12 - 2 == 10
         d_idx_list = list(range(0, d - num_frame_testing, stride)) + [max(0, d - num_frame_testing)]
+        # d_idx_list -- [0, 10, 20, 30, 40, 50, 60, 70, 80, 88]
+
         E = torch.zeros(b, d, c, h * sf, w * sf)
         W = torch.zeros(b, d, 1, 1, 1)
 
         progress_bar = tqdm(total=len(d_idx_list))
         for d_idx in d_idx_list:
             progress_bar.update(1)
-
+            # num_frame_testing -- 12
             lq_clip = lq[:, d_idx : d_idx + num_frame_testing, ...]
             out_clip = test_clip(lq_clip, model, args)
             out_clip_mask = torch.ones((b, min(num_frame_testing, d), 1, 1, 1))
 
-            if not_overlap_border:
-                if d_idx < d_idx_list[-1]:
-                    out_clip[:, -num_frame_overlapping // 2 :, ...] *= 0
-                    out_clip_mask[:, -num_frame_overlapping // 2 :, ...] *= 0
-                if d_idx > d_idx_list[0]:
-                    out_clip[:, : num_frame_overlapping // 2, ...] *= 0
-                    out_clip_mask[:, : num_frame_overlapping // 2, ...] *= 0
+            pdb.set_trace()
+
+            # lq_clip.size() -- [1, 12, 3, 180, 320]
+            # out_clip.size() -- [1, 12, 3, 720, 1280]
+            # out_clip_mask.size() -- [1, 12, 1, 1, 1]
+
+            # if not_overlap_border: # False
+            #     if d_idx < d_idx_list[-1]:
+            #         out_clip[:, -num_frame_overlapping // 2 :, ...] *= 0
+            #         out_clip_mask[:, -num_frame_overlapping // 2 :, ...] *= 0
+            #     if d_idx > d_idx_list[0]:
+            #         out_clip[:, : num_frame_overlapping // 2, ...] *= 0
+            #         out_clip_mask[:, : num_frame_overlapping // 2, ...] *= 0
 
             E[:, d_idx : d_idx + num_frame_testing, ...].add_(out_clip)
             W[:, d_idx : d_idx + num_frame_testing, ...].add_(out_clip_mask)
@@ -418,27 +430,37 @@ def test_clip(lq, model, args):
 
         # test patch by patch
         b, d, c, h, w = lq.size()
+        # pp b, d, c, h, w -- (1, 12, 3, 180, 320)
+
         c = c - 1 if args.nonblind_denoising else c
-        stride = size_patch_testing - overlap_size
+        stride = size_patch_testing - overlap_size # 128 - 20 -- 108
         h_idx_list = list(range(0, h - size_patch_testing, stride)) + [max(0, h - size_patch_testing)]
+        # h_idx_list -- [0, 52]
         w_idx_list = list(range(0, w - size_patch_testing, stride)) + [max(0, w - size_patch_testing)]
+        # w_idx_list -- [0, 108, 192]
+
         E = torch.zeros(b, d, c, h * sf, w * sf)
         W = torch.zeros_like(E)
 
-
         for h_idx in h_idx_list:
             for w_idx in w_idx_list:
+                # size_patch_testing -- 128
                 in_patch = lq[..., h_idx : h_idx + size_patch_testing, w_idx : w_idx + size_patch_testing]
-                # in_patch.size() -- [1, 6, 3, 128, 128]
+                # in_patch.size() -- [1, 6, 3, 128, 128], in_patch.mean() -- 0.4992
 
                 out_patch = model(in_patch).detach().cpu()
+                # (Pdb) in_patch.size() -- [1, 12, 3, 128, 128]
+                # out_patch.size() -- [1, 12, 3, 512, 512]
 
                 out_patch_mask = torch.ones_like(out_patch)
 
-                if not_overlap_border:
+                if not_overlap_border: #True
+                    # overlap_size -- 20
                     if h_idx < h_idx_list[-1]:
                         out_patch[..., -overlap_size // 2 :, :] *= 0
                         out_patch_mask[..., -overlap_size // 2 :, :] *= 0
+                        # out_patch[..., -overlap_size // 2 :, :].size() -- [1, 12, 3, 10, 512]
+                        # out_patch_mask[..., -overlap_size // 2 :, :].size() -- [1, 12, 3, 10, 512]
                     if w_idx < w_idx_list[-1]:
                         out_patch[..., :, -overlap_size // 2 :] *= 0
                         out_patch_mask[..., :, -overlap_size // 2 :] *= 0
