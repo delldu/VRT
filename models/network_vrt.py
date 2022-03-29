@@ -231,9 +231,9 @@ def flow_warp(x, flow, interp_mode: str = "bilinear", padding_mode: str = "zeros
 
     # scale grid to [-1,1]
     if interp_mode == "nearest4":  # todo: bug, no gradient for flow model in this case!!! but the result is good
-        vgrid_x_floor = 2.0 * torch.floor(vgrid[:, :, :, 0]) / max(w - 1, 1) - 1.0
+        vgrid_x_floor = 2.0 * torch.floor_divide(vgrid[:, :, :, 0], max(w - 1, 1))  - 1.0
         vgrid_x_ceil = 2.0 * torch.ceil(vgrid[:, :, :, 0]) / max(w - 1, 1) - 1.0
-        vgrid_y_floor = 2.0 * torch.floor(vgrid[:, :, :, 1]) / max(h - 1, 1) - 1.0
+        vgrid_y_floor = 2.0 * torch.floor_divide(vgrid[:, :, :, 1], max(h - 1, 1)) - 1.0
         vgrid_y_ceil = 2.0 * torch.ceil(vgrid[:, :, :, 1]) / max(h - 1, 1) - 1.0
 
         output00 = F.grid_sample(

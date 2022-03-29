@@ -3,5 +3,5 @@ python main_test_vrt.py \
 	--folder_lq testsets/REDS4/sharp_bicubic \
 	--folder_gt testsets/REDS4/GT \
 	--tile 12 128 128 \
-	--tile_overlap 2 20 20
+	--tile_overlap 2 10 10
 

@@ -367,7 +367,7 @@ def test_video(lq, model, args):
         sf = args.scale # SR -- 4, others 1
         # pp args.tile_overlap -- [2, 20, 20]
         num_frame_overlapping = args.tile_overlap[0]
-        # not_overlap_border = False
+        # overlap_border = False
         b, d, c, h, w = lq.size() # (1, 100, 3, 180, 320)
 
         c = c - 1 if args.nonblind_denoising else c
@@ -386,13 +386,11 @@ def test_video(lq, model, args):
             out_clip = test_clip(lq_clip, model, args)
             out_clip_mask = torch.ones((b, min(num_frame_testing, d), 1, 1, 1))
 
-            pdb.set_trace()
-
             # lq_clip.size() -- [1, 12, 3, 180, 320]
             # out_clip.size() -- [1, 12, 3, 720, 1280]
             # out_clip_mask.size() -- [1, 12, 1, 1, 1]
 
-            # if not_overlap_border: # False
+            # if overlap_border: # False
             #     if d_idx < d_idx_list[-1]:
             #         out_clip[:, -num_frame_overlapping // 2 :, ...] *= 0
             #         out_clip_mask[:, -num_frame_overlapping // 2 :, ...] *= 0
@@ -420,23 +418,23 @@ def test_clip(lq, model, args):
 
     sf = args.scale
     window_size = args.window_size
-    size_patch_testing = args.tile[1]
-    assert size_patch_testing % window_size[-1] == 0, "testing patch size should be a multiple of window_size."
+    block_size = args.tile[1]
+    assert block_size % window_size[-1] == 0, "testing patch size should be a multiple of window_size."
 
-    if size_patch_testing:
+    if block_size:
         # divide the clip to patches (spatially only, tested patch by patch)
-        overlap_size = args.tile_overlap[1]
-        not_overlap_border = True
+        over_size = args.tile_overlap[1]
+        overlap_border = True
 
         # test patch by patch
         b, d, c, h, w = lq.size()
         # pp b, d, c, h, w -- (1, 12, 3, 180, 320)
 
         c = c - 1 if args.nonblind_denoising else c
-        stride = size_patch_testing - overlap_size # 128 - 20 -- 108
-        h_idx_list = list(range(0, h - size_patch_testing, stride)) + [max(0, h - size_patch_testing)]
+        stride = block_size - over_size # 128 - 20 -- 108
+        h_idx_list = list(range(0, h - block_size, stride)) + [max(0, h - block_size)]
         # h_idx_list -- [0, 52]
-        w_idx_list = list(range(0, w - size_patch_testing, stride)) + [max(0, w - size_patch_testing)]
+        w_idx_list = list(range(0, w - block_size, stride)) + [max(0, w - block_size)]
         # w_idx_list -- [0, 108, 192]
 
         E = torch.zeros(b, d, c, h * sf, w * sf)
@@ -444,8 +442,8 @@ def test_clip(lq, model, args):
 
         for h_idx in h_idx_list:
             for w_idx in w_idx_list:
-                # size_patch_testing -- 128
-                in_patch = lq[..., h_idx : h_idx + size_patch_testing, w_idx : w_idx + size_patch_testing]
+                # block_size -- 128
+                in_patch = lq[..., h_idx : h_idx + block_size, w_idx : w_idx + block_size]
                 # in_patch.size() -- [1, 6, 3, 128, 128], in_patch.mean() -- 0.4992
 
                 out_patch = model(in_patch).detach().cpu()
@@ -454,29 +452,25 @@ def test_clip(lq, model, args):
 
                 out_patch_mask = torch.ones_like(out_patch)
 
-                if not_overlap_border: #True
-                    # overlap_size -- 20
+                if overlap_border: #True
+                    # over_size -- 20
                     if h_idx < h_idx_list[-1]:
-                        out_patch[..., -overlap_size // 2 :, :] *= 0
-                        out_patch_mask[..., -overlap_size // 2 :, :] *= 0
-                        # out_patch[..., -overlap_size // 2 :, :].size() -- [1, 12, 3, 10, 512]
-                        # out_patch_mask[..., -overlap_size // 2 :, :].size() -- [1, 12, 3, 10, 512]
+                        out_patch[..., -over_size // 2 :, :] *= 0
+                        out_patch_mask[..., -over_size // 2 :, :] *= 0
+                        # out_patch[..., -over_size // 2 :, :].size() -- [1, 12, 3, 10, 512]
+                        # out_patch_mask[..., -over_size // 2 :, :].size() -- [1, 12, 3, 10, 512]
                     if w_idx < w_idx_list[-1]:
-                        out_patch[..., :, -overlap_size // 2 :] *= 0
-                        out_patch_mask[..., :, -overlap_size // 2 :] *= 0
+                        out_patch[..., :, -over_size // 2 :] *= 0
+                        out_patch_mask[..., :, -over_size // 2 :] *= 0
                     if h_idx > h_idx_list[0]:
-                        out_patch[..., : overlap_size // 2, :] *= 0
-                        out_patch_mask[..., : overlap_size // 2, :] *= 0
+                        out_patch[..., : over_size // 2, :] *= 0
+                        out_patch_mask[..., : over_size // 2, :] *= 0
                     if w_idx > w_idx_list[0]:
-                        out_patch[..., :, : overlap_size // 2] *= 0
-                        out_patch_mask[..., :, : overlap_size // 2] *= 0
+                        out_patch[..., :, : over_size // 2] *= 0
+                        out_patch_mask[..., :, : over_size // 2] *= 0
 
-                E[
-                    ..., h_idx * sf : (h_idx + size_patch_testing) * sf, w_idx * sf : (w_idx + size_patch_testing) * sf
-                ].add_(out_patch)
-                W[
-                    ..., h_idx * sf : (h_idx + size_patch_testing) * sf, w_idx * sf : (w_idx + size_patch_testing) * sf
-                ].add_(out_patch_mask)
+                E[..., h_idx * sf : (h_idx + block_size) * sf, w_idx * sf : (w_idx + block_size) * sf].add_(out_patch)
+                W[..., h_idx * sf : (h_idx + block_size) * sf, w_idx * sf : (w_idx + block_size) * sf].add_(out_patch_mask)
         output = E.div_(W)
 
     else:

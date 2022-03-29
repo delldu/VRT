@@ -228,9 +228,9 @@ def flow_warp(x, flow, interp_mode: str = "bilinear", padding_mode: str = "zeros
 
     # scale grid to [-1,1]
     if interp_mode == "nearest4":  # todo: bug, no gradient for flow model in this case!!! but the result is good
-        vgrid_x_floor = 2.0 * torch.floor(vgrid[:, :, :, 0]) / max(w - 1, 1) - 1.0
+        vgrid_x_floor = 2.0 * torch.floor_divide(vgrid[:, :, :, 0], max(w - 1, 1))  - 1.0
         vgrid_x_ceil = 2.0 * torch.ceil(vgrid[:, :, :, 0]) / max(w - 1, 1) - 1.0
-        vgrid_y_floor = 2.0 * torch.floor(vgrid[:, :, :, 1]) / max(h - 1, 1) - 1.0
+        vgrid_y_floor = 2.0 * torch.floor_divide(vgrid[:, :, :, 1], max(h - 1, 1)) - 1.0
         vgrid_y_ceil = 2.0 * torch.ceil(vgrid[:, :, :, 1]) / max(h - 1, 1) - 1.0
 
         output00 = F.grid_sample(
@@ -571,6 +571,24 @@ def get_shift_size(x_size: List[int], window_size: List[int], shift_size: List[i
             use_shift_size[i] = 0
 
     return use_shift_size
+
+
+image_mask_cache: Dict[str, torch.Tensor] = {}
+image_mask_cache_max_size: int = 16
+
+def fast_compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: List[int]):
+    global image_mask_cache
+    global image_mask_cache_max_size
+
+    key = f"{D}-{H}-{W}-{window_size}-{shift_size}"
+    if key in image_mask_cache.keys():
+        mask = image_mask_cache[key]
+    else:
+        if len(image_mask_cache) > image_mask_cache_max_size:
+            image_mask_cache = {}
+        mask = compute_mask(D, H, W, window_size, shift_size)
+        image_mask_cache[key] = mask
+    return mask
 
 
 def compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: List[int]):
@@ -1048,7 +1066,7 @@ class TMSAG(nn.Module):
         Dp = int(math.ceil(D / window_size[0])) * window_size[0]
         Hp = int(math.ceil(H / window_size[1])) * window_size[1]
         Wp = int(math.ceil(W / window_size[2])) * window_size[2]
-        attn_mask = compute_mask(Dp, Hp, Wp, window_size, shift_size).to(x.device)
+        attn_mask = fast_compute_mask(Dp, Hp, Wp, window_size, shift_size).to(x.device)
 
         for blk in self.blocks:
             x = blk(x, attn_mask)
