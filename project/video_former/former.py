@@ -15,6 +15,7 @@ from einops.layers.torch import Rearrange
 from typing import List
 from typing import Tuple
 from typing import Optional
+from typing import Dict
 
 import pdb
 
@@ -228,7 +229,7 @@ def flow_warp(x, flow, interp_mode: str = "bilinear", padding_mode: str = "zeros
 
     # scale grid to [-1,1]
     if interp_mode == "nearest4":  # todo: bug, no gradient for flow model in this case!!! but the result is good
-        vgrid_x_floor = 2.0 * torch.floor_divide(vgrid[:, :, :, 0], max(w - 1, 1))  - 1.0
+        vgrid_x_floor = 2.0 * torch.floor_divide(vgrid[:, :, :, 0], max(w - 1, 1)) - 1.0
         vgrid_x_ceil = 2.0 * torch.ceil(vgrid[:, :, :, 0]) / max(w - 1, 1) - 1.0
         vgrid_y_floor = 2.0 * torch.floor_divide(vgrid[:, :, :, 1], max(h - 1, 1)) - 1.0
         vgrid_y_ceil = 2.0 * torch.ceil(vgrid[:, :, :, 1]) / max(h - 1, 1) - 1.0
@@ -459,11 +460,10 @@ class SpyNet(nn.Module):
                 upsampled_flow = F.pad(input=upsampled_flow, pad=[0, 0, 0, 1], mode="replicate")
             if upsampled_flow.size(3) != ref[level].size(3):
                 upsampled_flow = F.pad(input=upsampled_flow, pad=[0, 1, 0, 0], mode="replicate")
-            flow_temp = flow_warp(supp[level], upsampled_flow.permute(0, 2, 3, 1), interp_mode="bilinear", padding_mode="border")
-            flow = (
-                model(torch.cat([ref[level], flow_temp, upsampled_flow], dim = 1))
-                + upsampled_flow
+            flow_temp = flow_warp(
+                supp[level], upsampled_flow.permute(0, 2, 3, 1), interp_mode="bilinear", padding_mode="border"
             )
+            flow = model(torch.cat([ref[level], flow_temp, upsampled_flow], dim=1)) + upsampled_flow
 
             if level in self.return_levels:
                 scale = 2 ** (5 - level)  # level=5 (scale=1), level=4 (scale=2), level=3 (scale=4), level=2 (scale=8)
@@ -551,6 +551,7 @@ def window_reverse(windows, window_size: List[int], B: int, D: int, H: int, W: i
 
     return x
 
+
 def get_window_size(x_size: List[int], window_size: List[int], shift_size: List[int]) -> List[int]:
 
     """Get the window size and the shift size"""
@@ -575,6 +576,7 @@ def get_shift_size(x_size: List[int], window_size: List[int], shift_size: List[i
 
 image_mask_cache: Dict[str, torch.Tensor] = {}
 image_mask_cache_max_size: int = 16
+
 
 def fast_compute_mask(D: int, H: int, W: int, window_size: List[int], shift_size: List[int]):
     global image_mask_cache
@@ -1274,6 +1276,7 @@ class Stage(nn.Module):
 
         return torch.stack(x_backward, dim=1), torch.stack(x_forward, dim=1)
 
+
 class VideoFormer(nn.Module):
     """Video Restoration Transformer (VRT).
         A PyTorch impl of : `VRT: A Video Restoration Transformer`  -
@@ -1417,7 +1420,7 @@ class VideoFormer(nn.Module):
         self.NxDxHxWxC_NxCxDxHxW = Rearrange("n d h w c -> n c d h w")
 
     def forward(self, x):
-        # x: (N, D, C, H, W)
+        x = x.unsqueeze(0)  # Convert x from BxCxHxW to NxDxCxHxW
 
         # obtain noise level map
         if self.nonblind_denoising:
@@ -1446,7 +1449,7 @@ class VideoFormer(nn.Module):
                 self.forward_features(x, flows_backward, flows_forward).transpose(1, 4)
             ).transpose(1, 4)
             x = self.conv_last(x).transpose(1, 2)
-            return x + x_lq
+            output = x + x_lq
         else:
             # video sr
             x = self.conv_first(x.transpose(1, 2))
@@ -1455,7 +1458,9 @@ class VideoFormer(nn.Module):
             ).transpose(1, 4)
             x = self.conv_last(self.upsample(self.conv_before_upsample(x))).transpose(1, 2)
             _, _, C, H, W = x.shape
-            return x + torch.nn.functional.interpolate(x_lq, size=(C, H, W), mode="trilinear", align_corners=False)
+            output = x + F.interpolate(x_lq, size=(C, H, W), mode="trilinear", align_corners=False)
+
+        return output.squeeze(0)  # remove first channel
 
     def get_flows(self, x) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         """Get flow between frames t and t+1 from x."""
