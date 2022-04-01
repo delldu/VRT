@@ -4,5 +4,5 @@ python main_test_vrt.py \
 	--folder_lq testsets/Set8 \
 	--folder_gt testsets/Set8 \
 	--tile 10 128 128 \
-	--tile_overlap 2 10 10
+	--tile_overlap 2 20 20
 

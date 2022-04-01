@@ -369,6 +369,8 @@ def test_video(lq, model, args):
         num_frame_overlapping = args.tile_overlap[0]
         # overlap_border = False
         b, d, c, h, w = lq.size() # (1, 100, 3, 180, 320)
+        # lq.size() -- [1, 59, 4, 540, 960] for denoise
+
 
         c = c - 1 if args.nonblind_denoising else c
         stride = num_frame_testing - num_frame_overlapping # 12 - 2 == 10
